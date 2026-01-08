@@ -719,7 +719,7 @@ async function runPhase(phase: typeof PHASES[0]) {
   const prompt = PROMPTS[phase.name as keyof typeof PROMPTS];
 
   const agent = new RalphLoopAgent({
-    model: 'anthropic/claude-sonnet-4',
+    model: 'anthropic/claude-sonnet-4.5',
     
     instructions: `You are building the ralph-gpu WebGPU library.
 
