@@ -50,8 +50,10 @@ export function createPlaywrightTools() {
      */
     browserSnapshot: tool({
       description: "Get an accessibility snapshot of the current page",
-      parameters: z.object({}),
-      execute: async () => {
+      parameters: z.object({
+        includeText: z.boolean().optional().describe("Include text content in snapshot"),
+      }),
+      execute: async ({ includeText }) => {
         // This will be handled by the MCP server
         return { snapshot: "" };
       },
