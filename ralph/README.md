@@ -29,7 +29,12 @@ Create a `.env` file (use `.env.example` as template):
 
 ```bash
 # Required: AI API key
-ANTHROPIC_API_KEY=sk-ant-...
+
+# Option 1: Vercel AI Gateway (RECOMMENDED)
+AI_GATEWAY_API_KEY=your-gateway-key-here
+
+# Option 2: Direct API keys
+# ANTHROPIC_API_KEY=sk-ant-...
 # or
 # OPENAI_API_KEY=sk-...
 
@@ -42,6 +47,20 @@ AGENT_MODEL=anthropic/claude-opus-4.5
 # RECOMMENDED: Enable visual verification with Playwright MCP
 ENABLE_PLAYWRIGHT_MCP=true
 ```
+
+### API Key Options
+
+**Vercel AI Gateway** (Recommended):
+- ✅ Built-in caching (reduces costs)
+- ✅ Rate limiting protection
+- ✅ Usage monitoring and analytics
+- ✅ Model fallbacks
+- Get your key at: https://vercel.com/docs/ai-gateway
+
+**Direct API Keys**:
+- Works with Anthropic or OpenAI directly
+- No caching or monitoring
+- Get keys at console.anthropic.com or platform.openai.com
 
 **Visual Testing**: Enabling Playwright MCP allows the agent to verify that shaders actually render, not just compile. This is critical for a graphics library! See `PLAYWRIGHT_SETUP.md` for details.
 
@@ -241,6 +260,8 @@ if (!customCheck.success) {
 
 - [Ralph Loop Agent](https://github.com/vercel-labs/ralph-loop-agent) — Framework documentation
 - [Vercel AI SDK](https://sdk.vercel.ai/) — AI SDK docs
+- [AI Gateway Setup](./AI_GATEWAY_SETUP.md) — Using Vercel AI Gateway (recommended)
+- [Playwright Setup](./PLAYWRIGHT_SETUP.md) — Visual verification setup
 - [DX_EXAMPLES.md](../DX_EXAMPLES.md) — API specification for ralph-gpu
 - [RALPH_IMPLEMENTATION_PLAN.md](../RALPH_IMPLEMENTATION_PLAN.md) — Detailed implementation plan
 

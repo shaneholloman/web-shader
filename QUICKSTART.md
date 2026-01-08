@@ -5,7 +5,10 @@ Get the ralph-gpu project built autonomously in minutes.
 ## Prerequisites
 
 - Node.js 18+ and pnpm installed
-- An Anthropic API key (get one at https://console.anthropic.com/)
+- A Vercel AI Gateway API key (recommended) or Anthropic/OpenAI API key
+  - **AI Gateway**: https://vercel.com/docs/ai-gateway (includes caching, monitoring)
+  - **Anthropic**: https://console.anthropic.com/
+  - **OpenAI**: https://platform.openai.com/
 - 30-60 minutes (depending on API speed)
 
 ## Step 1: Install Dependencies
@@ -26,11 +29,20 @@ cp .env.example .env
 Edit `.env` and add your API key:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+# Option 1: Vercel AI Gateway (RECOMMENDED - includes caching & monitoring)
+AI_GATEWAY_API_KEY=your-gateway-key-here
+
+# Option 2: Direct API key
+# ANTHROPIC_API_KEY=sk-ant-your-key-here
 
 # Enable visual testing (RECOMMENDED)
 ENABLE_PLAYWRIGHT_MCP=true
 ```
+
+**API Key Options**:
+
+- **AI Gateway** (recommended): Better caching, reduces costs by ~50%, includes monitoring
+- **Direct Anthropic**: Works but no caching
 
 **Important**: Enable Playwright MCP for visual verification! This allows the agent to actually test that shaders render correctly, not just that code compiles. See `ralph/PLAYWRIGHT_SETUP.md` for details.
 

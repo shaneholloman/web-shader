@@ -61,11 +61,11 @@ const AGENT_MODEL = process.env.AGENT_MODEL || "anthropic/claude-opus-4.5";
 
 // Validate environment
 if (
+  !process.env.AI_GATEWAY_API_KEY &&
   !process.env.ANTHROPIC_API_KEY &&
-  !process.env.OPENAI_API_KEY &&
-  !process.env.AI_API_KEY
+  !process.env.OPENAI_API_KEY
 ) {
-  logError("Missing API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY");
+  logError("Missing API key. Set AI_GATEWAY_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY");
   process.exit(1);
 }
 
