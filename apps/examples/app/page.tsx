@@ -39,6 +39,11 @@ export default function Home() {
           <h2>Compute Shader →</h2>
           <p>GPU particle physics simulation</p>
         </Link>
+
+        <Link href="/fluid" className={styles.card}>
+          <h2>Fluid Simulation →</h2>
+          <p>Navier-Stokes fluid dynamics with auto mouse</p>
+        </Link>
       </div>
     </main>
   );

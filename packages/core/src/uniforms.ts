@@ -71,7 +71,7 @@ function getUniformSize(value: any): number {
   if (Array.isArray(value)) {
     const len = value.length;
     if (len === 2) return 8;  // vec2f
-    if (len === 3) return 16; // vec3f (aligned to 16 bytes)
+    if (len === 3) return 12; // vec3f (actual size is 12 bytes)
     if (len === 4) return 16; // vec4f
     if (len === 9) return 48; // mat3x3f (3 vec4s with padding)
     if (len === 16) return 64; // mat4x4f
@@ -80,11 +80,33 @@ function getUniformSize(value: any): number {
 }
 
 /**
- * Calculate total uniform buffer size with alignment
+ * Determine the alignment of a uniform value in bytes
+ * WGSL alignment rules:
+ * - f32/u32/i32/bool: 4 bytes
+ * - vec2<T>: 8 bytes
+ * - vec3<T>/vec4<T>: 16 bytes
+ * - matNxM: 16 bytes (column-major, each column is vec4-aligned)
+ */
+function getUniformAlignment(value: any): number {
+  if (typeof value === "number") return 4;  // f32
+  if (typeof value === "boolean") return 4; // bool (stored as u32)
+  if (Array.isArray(value)) {
+    const len = value.length;
+    if (len === 2) return 8;   // vec2f - 8-byte alignment
+    if (len === 3) return 16;  // vec3f - 16-byte alignment
+    if (len === 4) return 16;  // vec4f - 16-byte alignment
+    if (len === 9) return 16;  // mat3x3f
+    if (len === 16) return 16; // mat4x4f
+  }
+  return 16; // default to max alignment for safety
+}
+
+/**
+ * Calculate total uniform buffer size with proper WGSL alignment
  * Skips texture uniforms (they don't go in the uniform buffer)
  */
 export function calculateUniformBufferSize(uniforms: Uniforms): number {
-  let size = 0;
+  let offset = 0;
   for (const key in uniforms) {
     const value = uniforms[key].value;
     
@@ -96,18 +118,21 @@ export function calculateUniformBufferSize(uniforms: Uniforms): number {
     }
     
     const valueSize = getUniformSize(value);
+    const alignment = getUniformAlignment(value);
+    
     if (valueSize > 0) {
-      // Align to 16 bytes for struct members
-      size = Math.ceil(size / 16) * 16;
-      size += valueSize;
+      // Align to the type's required alignment (not always 16!)
+      offset = Math.ceil(offset / alignment) * alignment;
+      offset += valueSize;
     }
   }
-  // Final alignment to 16 bytes (minimum 16 if any uniforms exist)
-  return size > 0 ? Math.ceil(size / 16) * 16 : 0;
+  // Final alignment to 16 bytes (minimum buffer size alignment)
+  return offset > 0 ? Math.ceil(offset / 16) * 16 : 0;
 }
 
 /**
  * Write uniform data to a buffer
+ * Returns the actual size of the data written (not including alignment padding)
  */
 export function writeUniformData(
   data: Float32Array,
@@ -134,7 +159,7 @@ export function writeUniformData(
       data[offset / 4] = value[0];
       data[offset / 4 + 1] = value[1];
       data[offset / 4 + 2] = value[2];
-      return 16; // vec3 aligned to 16 bytes
+      return 12; // vec3f is 12 bytes (3 floats), alignment handled separately
     }
     if (len === 4) {
       data[offset / 4] = value[0];
@@ -148,7 +173,7 @@ export function writeUniformData(
 }
 
 /**
- * Update uniform buffer from uniforms object
+ * Update uniform buffer from uniforms object with proper WGSL alignment
  * Skips texture uniforms (they don't go in the uniform buffer)
  */
 export function updateUniformBuffer(
@@ -172,10 +197,15 @@ export function updateUniformBuffer(
       }
     }
     
-    // Align to 16 bytes
-    offset = Math.ceil(offset / 16) * 16;
-    const written = writeUniformData(data, offset, value);
-    offset += written;
+    const valueSize = getUniformSize(value);
+    const alignment = getUniformAlignment(value);
+    
+    if (valueSize > 0) {
+      // Align to the type's required alignment (not always 16!)
+      offset = Math.ceil(offset / alignment) * alignment;
+      const written = writeUniformData(data, offset, value);
+      offset += written;
+    }
   }
 
   device.queue.writeBuffer(buffer, 0, data.buffer);
