@@ -28,6 +28,7 @@ export class ComputeShader {
   private globalsBuffer: GPUBuffer;
   private workgroupSize: [number, number, number];
   private needsRebuild = true;
+  private usesGlobals = false;
 
   constructor(
     device: GPUDevice,
@@ -70,6 +71,9 @@ export class ComputeShader {
    * Build the compute pipeline (lazy)
    */
   private buildPipeline(): void {
+    // Check if shader uses globals (references globals. anywhere)
+    this.usesGlobals = /\bglobals\.\w+/.test(this.wgsl);
+    
     // Prepend globals to shader
     const fullWGSL = `
 ${getGlobalsWGSL()}
@@ -221,19 +225,21 @@ ${this.wgsl}
     
     passEncoder.setPipeline(this.pipeline);
 
-    // Bind globals (group 0)
-    const globalsBindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        {
-          binding: 0,
-          resource: { buffer: this.globalsBuffer },
-        },
-      ],
-    });
-    passEncoder.setBindGroup(0, globalsBindGroup);
+    // Bind globals (group 0) only if shader uses them
+    if (this.usesGlobals) {
+      const globalsBindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          {
+            binding: 0,
+            resource: { buffer: this.globalsBuffer },
+          },
+        ],
+      });
+      passEncoder.setBindGroup(0, globalsBindGroup);
+    }
 
-    // Bind user uniforms (group 1)
+    // Bind user uniforms (always group 1 since shader uses @group(1))
     if (this.bindGroup) {
       passEncoder.setBindGroup(1, this.bindGroup);
     }

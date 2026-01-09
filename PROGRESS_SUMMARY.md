@@ -26,7 +26,8 @@ The framework is now fully functional with all GPU warnings resolved. All exampl
 - ✅ **`/uniforms`**: Animated wave with custom uniforms works - **no GPU warnings**
 - ✅ **`/render-target`**: Offscreen rendering and post-processing works - **no GPU warnings**
 - ✅ **`/ping-pong`**: Diffusion simulation works - **no GPU warnings**
-- ✅ **`/compute`**: Particle simulation runs - **no GPU warnings**
+- ✅ **`/particles`**: Instanced particle grid with storage buffers works - **no GPU warnings**
+- ✅ **`/compute`**: GPU compute shader particle simulation with physics works - **no GPU warnings**
 
 ---
 
@@ -70,6 +71,8 @@ The following GPU warnings have been **completely resolved**:
 5. **Format Switching**: Implemented `Map<Format, Pipeline>` in `Pass` class to handle rendering to different targets with the same shader.
 6. **Dynamic Bind Groups**: Modified `Pass` to recreate Bind Groups when uniforms change, ensuring the correct textures are bound.
 7. **RenderTarget Uniforms**: Updated examples to pass `RenderTarget` objects instead of just textures to uniforms, allowing the framework to bind both texture and sampler automatically.
+8. **Compute Shader Globals Detection** (Jan 2026): Fixed `ComputeShader` class to detect if shader uses globals and only bind group 0 when needed. This fixes "binding index 0 not present in the bind group layout" errors for compute shaders that don't use global uniforms.
+9. **Compute Shader Particle Size**: Fixed particle size calculation in compute example - now uses clip-space sizing with proper aspect ratio correction.
 
 ---
 

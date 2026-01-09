@@ -39,15 +39,15 @@ export default function ComputePage() {
         for (let i = 0; i < particleCount; i++) {
           const offset = i * 8;
           // Position (x, y)
-          initialData[offset] = (Math.random() - 0.5) * 2;
-          initialData[offset + 1] = (Math.random() - 0.5) * 2;
+          initialData[offset] = (Math.random() - 0.5) * 1.8;
+          initialData[offset + 1] = (Math.random() - 0.5) * 1.8;
           // Velocity (x, y)
-          initialData[offset + 2] = (Math.random() - 0.5) * 0.1;
-          initialData[offset + 3] = (Math.random() - 0.5) * 0.1;
+          initialData[offset + 2] = (Math.random() - 0.5) * 0.02;
+          initialData[offset + 3] = (Math.random() - 0.5) * 0.02;
           // Life, age, size, unused
           initialData[offset + 4] = 1.0;
           initialData[offset + 5] = 0.0;
-          initialData[offset + 6] = 0.01;
+          initialData[offset + 6] = 0.025; // Size in clip space (2.5% of screen height)
           initialData[offset + 7] = 0.0;
         }
         particleBuffer.write(initialData);
@@ -73,23 +73,31 @@ export default function ComputePage() {
             var particle = particles[index];
             
             // Update position
-            particle.position += particle.velocity * globals.deltaTime * 60.0;
+            particle.position += particle.velocity;
             
-            // Bounce off edges
-            if (particle.position.x > 1.0 || particle.position.x < -1.0) {
-              particle.velocity.x *= -0.9;
-              particle.position.x = clamp(particle.position.x, -1.0, 1.0);
+            // Bounce off edges with slight energy loss
+            if (particle.position.x > 0.95) {
+              particle.velocity.x *= -0.95;
+              particle.position.x = 0.95;
             }
-            if (particle.position.y > 1.0 || particle.position.y < -1.0) {
-              particle.velocity.y *= -0.9;
-              particle.position.y = clamp(particle.position.y, -1.0, 1.0);
+            if (particle.position.x < -0.95) {
+              particle.velocity.x *= -0.95;
+              particle.position.x = -0.95;
+            }
+            if (particle.position.y > 0.95) {
+              particle.velocity.y *= -0.95;
+              particle.position.y = 0.95;
+            }
+            if (particle.position.y < -0.95) {
+              particle.velocity.y *= -0.95;
+              particle.position.y = -0.95;
             }
             
-            // Apply gravity
-            particle.velocity.y -= 0.001;
+            // Apply very gentle gravity
+            particle.velocity.y -= 0.0002;
             
-            // Add some friction
-            particle.velocity *= 0.999;
+            // Very slight friction
+            particle.velocity *= 0.9995;
             
             particles[index] = particle;
           }
@@ -124,12 +132,15 @@ export default function ComputePage() {
             let particle = particles[iid];
             
             var quadPos = array<vec2f, 6>(
-              vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1),
-              vec2f(-1, 1), vec2f(1, -1), vec2f(1, 1),
+              vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+              vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
             );
             
-            let size = particle.size * 50.0;
-            let worldPos = particle.position + quadPos[vid] * size / globals.resolution;
+            // Size in clip space (0.02 = 2% of screen height)
+            let aspect = globals.resolution.x / globals.resolution.y;
+            let size = particle.size;
+            let localPos = quadPos[vid] * vec2f(size / aspect, size);
+            let worldPos = particle.position + localPos;
             
             var out: VertexOutput;
             out.pos = vec4f(worldPos, 0.0, 1.0);

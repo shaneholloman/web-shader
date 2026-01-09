@@ -30,14 +30,14 @@ export default function Home() {
           <p>Iterative effects and simulations</p>
         </Link>
 
-        <Link href="/compute" className={styles.card}>
-          <h2>Compute Shader →</h2>
-          <p>GPU particle system with compute shaders</p>
+        <Link href="/particles" className={styles.card}>
+          <h2>Particles →</h2>
+          <p>Instanced rendering with storage buffers</p>
         </Link>
 
-        <Link href="/fluid" className={styles.card}>
-          <h2>Fluid Simulation →</h2>
-          <p>Interactive fluid dynamics</p>
+        <Link href="/compute" className={styles.card}>
+          <h2>Compute Shader →</h2>
+          <p>GPU particle physics simulation</p>
         </Link>
       </div>
     </main>
