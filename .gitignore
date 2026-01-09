@@ -10,6 +10,7 @@ coverage
 # Next.js
 .next
 out
+.pnpm-store
 next-env.d.ts
 
 # Build outputs

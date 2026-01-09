@@ -3,6 +3,16 @@
 import { useEffect, useRef } from 'react';
 import { gpu, GPUContext } from 'ralph-gpu';
 
+// Simulation parameters
+const SIM_RESOLUTION = 256;
+const DYE_RESOLUTION = 512;
+const PRESSURE_ITERATIONS = 10;
+const CURL_STRENGTH = 20;
+const PRESSURE_DISSIPATION = 0.8;
+const VELOCITY_DISSIPATION = 0.99;
+const SPLAT_RADIUS = 0.003;
+const SPLAT_FORCE = 6000;
+
 export default function FluidPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -30,235 +40,495 @@ export default function FluidPage() {
           return;
         }
 
-        // Resolution for simulation
-        const simRes = 256;
-        const dyeRes = 1024;
-
-        // Simulation parameters
-        const densityDissipation = 0.97;
-        const velocityDissipation = 0.98;
-        const radius = 0.3;
-
-        // Create ping-pong buffers for simulation
-        const velocity = ctx.pingPong(simRes, simRes, {
+        const simWidth = SIM_RESOLUTION;
+        const simHeight = SIM_RESOLUTION;
+        const dyeWidth = DYE_RESOLUTION;
+        const dyeHeight = DYE_RESOLUTION;
+        
+        // Create ping-pong buffers for velocity (rg16float for x,y components)
+        const velocity = ctx.pingPong(simWidth, simHeight, { 
           format: "rg16float",
           filter: "linear",
           wrap: "clamp"
         });
-
-        const density = ctx.pingPong(dyeRes, dyeRes, {
+        
+        // Create ping-pong buffers for dye (rgba16float for color)
+        const dye = ctx.pingPong(dyeWidth, dyeHeight, { 
           format: "rgba16float",
           filter: "linear",
           wrap: "clamp"
         });
+        
+        // Create single-channel targets for pressure, divergence, curl
+        const pressure = ctx.pingPong(simWidth, simHeight, { 
+          format: "r16float",
+          filter: "linear",
+          wrap: "clamp"
+        });
+        
+        const divergence = ctx.target(simWidth, simHeight, { 
+          format: "r16float",
+          filter: "nearest",
+          wrap: "clamp"
+        });
+        
+        const curl = ctx.target(simWidth, simHeight, { 
+          format: "r16float",
+          filter: "nearest",
+          wrap: "clamp"
+        });
 
-        // Splat pass - add color/velocity at a point
-        // Pack uniforms into vec4s for proper alignment
-        const splatUniforms = {
+        // ===== SPLAT PASS =====
+        // Adds velocity and dye at the mouse/input position
+        const splatVelocityUniforms = {
           uTarget: { value: velocity.read },
-          // Pack into vec4: xy=point, z=aspectRatio, w=radius
-          params: { value: [0.5, 0.5, ctx.width / ctx.height, radius / 100] as [number, number, number, number] },
-          // Pack color as vec4 (w unused)
-          color: { value: [0, 0, 0, 1] as [number, number, number, number] },
+          uPoint: { value: [0.5, 0.5] as [number, number] },
+          uColor: { value: [0, 0, 0] as [number, number, number] },
+          uRadius: { value: SPLAT_RADIUS },
         };
-
-        const splatPass = ctx.pass(/* wgsl */ `
+        
+        const splatVelocityPass = ctx.pass(/* wgsl */ `
           @group(1) @binding(0) var uTarget: texture_2d<f32>;
           @group(1) @binding(1) var uTargetSampler: sampler;
-
-          struct SplatParams {
-            params: vec4f,
-            color: vec4f,
+          
+          struct Params {
+            point: vec2f,
+            color: vec3f,
+            radius: f32,
           }
-          @group(1) @binding(2) var<uniform> u: SplatParams;
+          @group(1) @binding(2) var<uniform> params: Params;
 
           @fragment
           fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
             let uv = pos.xy / globals.resolution;
-            let point = u.params.xy;
-            let aspectRatio = u.params.z;
-            let radius = u.params.w;
-            let color = u.color.xyz;
+            let base = textureSample(uTarget, uTargetSampler, uv).xy;
             
-            var p = uv - point;
-            p.x *= aspectRatio;
-            let splat = exp(-dot(p, p) / radius) * color;
-            let base = textureSample(uTarget, uTargetSampler, uv).xyz;
+            var p = uv - params.point;
+            p.x *= globals.aspect;
+            
+            let splat = exp(-dot(p, p) / params.radius) * params.color.xy;
+            
+            return vec4f(base + splat, 0.0, 1.0);
+          }
+        `, { uniforms: splatVelocityUniforms });
+
+        const splatDyeUniforms = {
+          uTarget: { value: dye.read },
+          uPoint: { value: [0.5, 0.5] as [number, number] },
+          uColor: { value: [1, 0, 0] as [number, number, number] },
+          uRadius: { value: SPLAT_RADIUS },
+        };
+        
+        const splatDyePass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uTarget: texture_2d<f32>;
+          @group(1) @binding(1) var uTargetSampler: sampler;
+          
+          struct Params {
+            point: vec2f,
+            color: vec3f,
+            radius: f32,
+          }
+          @group(1) @binding(2) var<uniform> params: Params;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let uv = pos.xy / globals.resolution;
+            let base = textureSample(uTarget, uTargetSampler, uv).rgb;
+            
+            var p = uv - params.point;
+            p.x *= globals.aspect;
+            
+            let splat = exp(-dot(p, p) / params.radius) * params.color;
+            
             return vec4f(base + splat, 1.0);
           }
-        `, { uniforms: splatUniforms });
+        `, { uniforms: splatDyeUniforms });
 
-        // Simple advection pass
-        // Pack uniforms: xy=dt and dissipation, zw=texelSize
-        const advectionUniforms = {
+        // ===== CURL PASS =====
+        // Calculates the curl (vorticity) of the velocity field
+        const curlUniforms = {
+          uVelocity: { value: velocity.read },
+        };
+        
+        const curlPass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uVelocity: texture_2d<f32>;
+          @group(1) @binding(1) var uVelocitySampler: sampler;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
+            let uv = pos.xy / globals.resolution;
+            
+            let L = textureSample(uVelocity, uVelocitySampler, uv - vec2f(texelSize.x, 0.0)).y;
+            let R = textureSample(uVelocity, uVelocitySampler, uv + vec2f(texelSize.x, 0.0)).y;
+            let B = textureSample(uVelocity, uVelocitySampler, uv - vec2f(0.0, texelSize.y)).x;
+            let T = textureSample(uVelocity, uVelocitySampler, uv + vec2f(0.0, texelSize.y)).x;
+            
+            let vorticity = R - L - T + B;
+            
+            return vec4f(0.5 * vorticity, 0.0, 0.0, 1.0);
+          }
+        `, { uniforms: curlUniforms });
+
+        // ===== VORTICITY PASS =====
+        // Applies vorticity confinement to enhance swirling motion
+        const vorticityUniforms = {
+          uVelocity: { value: velocity.read },
+          uCurl: { value: curl },
+          uCurlStrength: { value: CURL_STRENGTH },
+          uDt: { value: 0.016 },
+        };
+        
+        const vorticityPass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uVelocity: texture_2d<f32>;
+          @group(1) @binding(1) var uVelocitySampler: sampler;
+          @group(1) @binding(2) var uCurl: texture_2d<f32>;
+          @group(1) @binding(3) var uCurlSampler: sampler;
+          
+          struct Params {
+            curlStrength: f32,
+            dt: f32,
+          }
+          @group(1) @binding(4) var<uniform> params: Params;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
+            let uv = pos.xy / globals.resolution;
+            
+            let L = textureSample(uCurl, uCurlSampler, uv - vec2f(texelSize.x, 0.0)).x;
+            let R = textureSample(uCurl, uCurlSampler, uv + vec2f(texelSize.x, 0.0)).x;
+            let B = textureSample(uCurl, uCurlSampler, uv - vec2f(0.0, texelSize.y)).x;
+            let T = textureSample(uCurl, uCurlSampler, uv + vec2f(0.0, texelSize.y)).x;
+            let C = textureSample(uCurl, uCurlSampler, uv).x;
+            
+            var force = vec2f(abs(T) - abs(B), abs(R) - abs(L));
+            let lengthSq = max(0.00001, dot(force, force));
+            force = force / sqrt(lengthSq);
+            force = force * params.curlStrength * C;
+            force.y = -force.y;
+            
+            let velocity = textureSample(uVelocity, uVelocitySampler, uv).xy;
+            let result = velocity + force * params.dt;
+            
+            return vec4f(result, 0.0, 1.0);
+          }
+        `, { uniforms: vorticityUniforms });
+
+        // ===== DIVERGENCE PASS =====
+        // Calculates the divergence of the velocity field
+        const divergenceUniforms = {
+          uVelocity: { value: velocity.read },
+        };
+        
+        const divergencePass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uVelocity: texture_2d<f32>;
+          @group(1) @binding(1) var uVelocitySampler: sampler;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
+            let uv = pos.xy / globals.resolution;
+            
+            let L = textureSample(uVelocity, uVelocitySampler, uv - vec2f(texelSize.x, 0.0)).x;
+            let R = textureSample(uVelocity, uVelocitySampler, uv + vec2f(texelSize.x, 0.0)).x;
+            let B = textureSample(uVelocity, uVelocitySampler, uv - vec2f(0.0, texelSize.y)).y;
+            let T = textureSample(uVelocity, uVelocitySampler, uv + vec2f(0.0, texelSize.y)).y;
+            
+            let div = 0.5 * (R - L + T - B);
+            
+            return vec4f(div, 0.0, 0.0, 1.0);
+          }
+        `, { uniforms: divergenceUniforms });
+
+        // ===== PRESSURE PASS (Jacobi iteration) =====
+        // Solves for pressure using Jacobi iteration
+        const pressureUniforms = {
+          uPressure: { value: pressure.read },
+          uDivergence: { value: divergence },
+        };
+        
+        const pressurePass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uPressure: texture_2d<f32>;
+          @group(1) @binding(1) var uPressureSampler: sampler;
+          @group(1) @binding(2) var uDivergence: texture_2d<f32>;
+          @group(1) @binding(3) var uDivergenceSampler: sampler;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
+            let uv = pos.xy / globals.resolution;
+            
+            let L = textureSample(uPressure, uPressureSampler, uv - vec2f(texelSize.x, 0.0)).x;
+            let R = textureSample(uPressure, uPressureSampler, uv + vec2f(texelSize.x, 0.0)).x;
+            let B = textureSample(uPressure, uPressureSampler, uv - vec2f(0.0, texelSize.y)).x;
+            let T = textureSample(uPressure, uPressureSampler, uv + vec2f(0.0, texelSize.y)).x;
+            let divergence = textureSample(uDivergence, uDivergenceSampler, uv).x;
+            
+            let pressure = (L + R + B + T - divergence) * 0.25;
+            
+            return vec4f(pressure, 0.0, 0.0, 1.0);
+          }
+        `, { uniforms: pressureUniforms });
+
+        // ===== GRADIENT SUBTRACT PASS =====
+        // Subtracts the pressure gradient from velocity to make it divergence-free
+        const gradientUniforms = {
+          uPressure: { value: pressure.read },
+          uVelocity: { value: velocity.read },
+        };
+        
+        const gradientPass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uPressure: texture_2d<f32>;
+          @group(1) @binding(1) var uPressureSampler: sampler;
+          @group(1) @binding(2) var uVelocity: texture_2d<f32>;
+          @group(1) @binding(3) var uVelocitySampler: sampler;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
+            let uv = pos.xy / globals.resolution;
+            
+            let L = textureSample(uPressure, uPressureSampler, uv - vec2f(texelSize.x, 0.0)).x;
+            let R = textureSample(uPressure, uPressureSampler, uv + vec2f(texelSize.x, 0.0)).x;
+            let B = textureSample(uPressure, uPressureSampler, uv - vec2f(0.0, texelSize.y)).x;
+            let T = textureSample(uPressure, uPressureSampler, uv + vec2f(0.0, texelSize.y)).x;
+            
+            var velocity = textureSample(uVelocity, uVelocitySampler, uv).xy;
+            velocity -= 0.5 * vec2f(R - L, T - B);
+            
+            return vec4f(velocity, 0.0, 1.0);
+          }
+        `, { uniforms: gradientUniforms });
+
+        // ===== ADVECTION PASS =====
+        // Moves the field (velocity or dye) along the velocity field
+        const advectVelocityUniforms = {
           uVelocity: { value: velocity.read },
           uSource: { value: velocity.read },
-          params: { value: [0.016, velocityDissipation, 1/simRes, 1/simRes] as [number, number, number, number] },
+          uDissipation: { value: VELOCITY_DISSIPATION },
+          uDt: { value: 0.016 },
         };
-
-        const advectionPass = ctx.pass(/* wgsl */ `
+        
+        const advectVelocityPass = ctx.pass(/* wgsl */ `
           @group(1) @binding(0) var uVelocity: texture_2d<f32>;
           @group(1) @binding(1) var uVelocitySampler: sampler;
           @group(1) @binding(2) var uSource: texture_2d<f32>;
           @group(1) @binding(3) var uSourceSampler: sampler;
-
-          struct AdvectionParams {
-            params: vec4f,
+          
+          struct Params {
+            dissipation: f32,
+            dt: f32,
           }
-          @group(1) @binding(4) var<uniform> u: AdvectionParams;
+          @group(1) @binding(4) var<uniform> params: Params;
 
           @fragment
           fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let texelSize = 1.0 / globals.resolution;
             let uv = pos.xy / globals.resolution;
-            let dt = u.params.x;
-            let dissipation = u.params.y;
-            let texelSize = u.params.zw;
             
-            // Get velocity at this point
-            let vel = textureSample(uVelocity, uVelocitySampler, uv).xy;
+            let velocity = textureSample(uVelocity, uVelocitySampler, uv).xy;
+            var coord = uv - params.dt * velocity * texelSize;
             
-            // Trace back in time (scale velocity by texel size)
-            let coord = uv - dt * vel * texelSize;
+            let result = textureSample(uSource, uSourceSampler, coord).xy * params.dissipation;
             
-            // Sample source at traced position
-            var result = dissipation * textureSample(uSource, uSourceSampler, coord);
-            result.a = 1.0;
-            return result;
+            return vec4f(result, 0.0, 1.0);
           }
-        `, { uniforms: advectionUniforms });
+        `, { uniforms: advectVelocityUniforms });
 
-        // Display pass - render density with color mapping
-        const displayUniforms = {
-          uDensity: { value: density.read },
+        const advectDyeUniforms = {
+          uVelocity: { value: velocity.read },
+          uSource: { value: dye.read },
+          uDissipation: { value: 0.98 },
+          uDt: { value: 0.016 },
         };
+        
+        const advectDyePass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uVelocity: texture_2d<f32>;
+          @group(1) @binding(1) var uVelocitySampler: sampler;
+          @group(1) @binding(2) var uSource: texture_2d<f32>;
+          @group(1) @binding(3) var uSourceSampler: sampler;
+          
+          struct Params {
+            dissipation: f32,
+            dt: f32,
+          }
+          @group(1) @binding(4) var<uniform> params: Params;
 
-        const displayPass = ctx.pass(/* wgsl */ `
-          @group(1) @binding(0) var uDensity: texture_2d<f32>;
-          @group(1) @binding(1) var uDensitySampler: sampler;
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let dyeTexelSize = 1.0 / vec2f(${dyeWidth}.0, ${dyeHeight}.0);
+            let velTexelSize = 1.0 / vec2f(${simWidth}.0, ${simHeight}.0);
+            let uv = pos.xy / globals.resolution;
+            
+            let velocity = textureSample(uVelocity, uVelocitySampler, uv).xy;
+            var coord = uv - params.dt * velocity * velTexelSize;
+            
+            let result = textureSample(uSource, uSourceSampler, coord).rgb * params.dissipation;
+            
+            return vec4f(result, 1.0);
+          }
+        `, { uniforms: advectDyeUniforms });
+
+        // ===== CLEAR PRESSURE PASS =====
+        const clearPressureUniforms = {
+          uPressure: { value: pressure.read },
+          uDissipation: { value: PRESSURE_DISSIPATION },
+        };
+        
+        const clearPressurePass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uPressure: texture_2d<f32>;
+          @group(1) @binding(1) var uPressureSampler: sampler;
+          
+          struct Params {
+            dissipation: f32,
+          }
+          @group(1) @binding(2) var<uniform> params: Params;
 
           @fragment
           fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
             let uv = pos.xy / globals.resolution;
-            let fluid = textureSample(uDensity, uDensitySampler, uv).rgb;
+            let value = textureSample(uPressure, uPressureSampler, uv).x * params.dissipation;
+            return vec4f(value, 0.0, 0.0, 1.0);
+          }
+        `, { uniforms: clearPressureUniforms });
+
+        // ===== DISPLAY PASS =====
+        // Renders the dye to the screen
+        const displayUniforms = {
+          uDye: { value: dye.read },
+        };
+        
+        const displayPass = ctx.pass(/* wgsl */ `
+          @group(1) @binding(0) var uDye: texture_2d<f32>;
+          @group(1) @binding(1) var uDyeSampler: sampler;
+
+          @fragment
+          fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+            let uv = pos.xy / globals.resolution;
+            let color = textureSample(uDye, uDyeSampler, uv).rgb;
             
-            // Add subtle background gradient
-            let bg = mix(
-              vec3f(0.02, 0.02, 0.05),
-              vec3f(0.05, 0.02, 0.08),
-              uv.y
-            );
+            // Tone mapping and gamma correction
+            let mapped = color / (1.0 + color);
+            let gamma = pow(mapped, vec3f(1.0 / 2.2));
             
-            // Blend fluid visualization with background
-            let finalColor = bg + fluid * 0.8;
-            
-            return vec4f(finalColor, 1.0);
+            return vec4f(gamma, 1.0);
           }
         `, { uniforms: displayUniforms });
 
-        // Splat helper function
-        function splat(x: number, y: number, dx: number, dy: number) {
-          const aspectRatio = ctx!.width / ctx!.height;
-          const r = radius / 100;
-          
-          // Splat velocity
-          splatUniforms.uTarget.value = velocity.read;
-          splatUniforms.params.value = [x, y, aspectRatio, r];
-          splatUniforms.color.value = [dx * 0.5, dy * 0.5, 0, 1];
-
-          ctx!.setTarget(velocity.write);
-          ctx!.autoClear = false;
-          splatPass.draw();
-          velocity.swap();
-
-          // Splat density with rainbow colors based on position and time
-          splatUniforms.uTarget.value = density.read;
-          const hue = (x * 2 + ctx!.time * 0.2) % 1;
-          const color = hslToRgb(hue, 0.9, 0.6);
-          splatUniforms.color.value = [color[0] * 15, color[1] * 15, color[2] * 15, 1];
-
-          ctx!.setTarget(density.write);
-          splatPass.draw();
-          density.swap();
-        }
-
-        // HSL to RGB conversion
-        function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-          let r: number, g: number, b: number;
-          if (s === 0) {
-            r = g = b = l;
-          } else {
-            const hue2rgb = (p: number, q: number, t: number): number => {
-              if (t < 0) t += 1;
-              if (t > 1) t -= 1;
-              if (t < 1/6) return p + (q - p) * 6 * t;
-              if (t < 1/2) return q;
-              if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-              return p;
-            };
-            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1/3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1/3);
-          }
-          return [r, g, b];
-        }
-
-        // Track last mouse position for velocity calculation
+        // State for fake mouse
         let lastMouseX = 0.5;
         let lastMouseY = 0.5;
-        let lastTime = 0;
 
-        function frame(timestamp: number) {
-          if (disposed) return;
-
-          const dt = Math.min((timestamp - lastTime) / 1000, 0.016);
-          lastTime = timestamp;
-
-          // Fake mouse movement using sin/cos
-          const time = timestamp * 0.001;
+        function frame() {
+          if (disposed || !ctx) return;
+          
+          const dt = 0.016; // Fixed timestep
+          const time = ctx.time;
+          
+          // Fake mouse using sin/cos for testing
           const mouseX = 0.5 + 0.3 * Math.sin(time);
-          const mouseY = 0.5 + 0.3 * Math.cos(time * 4);
-
-          // Calculate velocity from fake mouse movement
-          const dx = (mouseX - lastMouseX) * 500;
-          const dy = (mouseY - lastMouseY) * 500;
-
+          const mouseY = 0.5 + 0.2 * Math.cos(time * 4);
+          const deltaX = (mouseX - lastMouseX) * SPLAT_FORCE;
+          const deltaY = (mouseY - lastMouseY) * SPLAT_FORCE;
+          
+          // Generate color based on time
+          const hue = (time * 0.1) % 1.0;
+          const color = hslToRgb(hue, 1.0, 0.5);
+          
+          // ===== SPLAT STEP =====
+          // Update splat uniforms
+          splatVelocityUniforms.uTarget.value = velocity.read;
+          splatVelocityUniforms.uPoint.value = [mouseX, mouseY];
+          splatVelocityUniforms.uColor.value = [deltaX, deltaY, 0];
+          
+          ctx.setTarget(velocity.write);
+          ctx.autoClear = false;
+          splatVelocityPass.draw();
+          velocity.swap();
+          
+          splatDyeUniforms.uTarget.value = dye.read;
+          splatDyeUniforms.uPoint.value = [mouseX, mouseY];
+          splatDyeUniforms.uColor.value = color;
+          
+          ctx.setTarget(dye.write);
+          splatDyePass.draw();
+          dye.swap();
+          
+          // ===== CURL STEP =====
+          curlUniforms.uVelocity.value = velocity.read;
+          ctx.setTarget(curl);
+          curlPass.draw();
+          
+          // ===== VORTICITY STEP =====
+          vorticityUniforms.uVelocity.value = velocity.read;
+          vorticityUniforms.uCurl.value = curl;
+          vorticityUniforms.uDt.value = dt;
+          
+          ctx.setTarget(velocity.write);
+          vorticityPass.draw();
+          velocity.swap();
+          
+          // ===== DIVERGENCE STEP =====
+          divergenceUniforms.uVelocity.value = velocity.read;
+          ctx.setTarget(divergence);
+          divergencePass.draw();
+          
+          // ===== CLEAR PRESSURE =====
+          clearPressureUniforms.uPressure.value = pressure.read;
+          ctx.setTarget(pressure.write);
+          clearPressurePass.draw();
+          pressure.swap();
+          
+          // ===== PRESSURE SOLVE (Jacobi iterations) =====
+          pressureUniforms.uDivergence.value = divergence;
+          for (let i = 0; i < PRESSURE_ITERATIONS; i++) {
+            pressureUniforms.uPressure.value = pressure.read;
+            ctx.setTarget(pressure.write);
+            pressurePass.draw();
+            pressure.swap();
+          }
+          
+          // ===== GRADIENT SUBTRACT =====
+          gradientUniforms.uPressure.value = pressure.read;
+          gradientUniforms.uVelocity.value = velocity.read;
+          ctx.setTarget(velocity.write);
+          gradientPass.draw();
+          velocity.swap();
+          
+          // ===== ADVECTION STEP =====
+          // Advect velocity
+          advectVelocityUniforms.uVelocity.value = velocity.read;
+          advectVelocityUniforms.uSource.value = velocity.read;
+          advectVelocityUniforms.uDt.value = dt;
+          
+          ctx.setTarget(velocity.write);
+          advectVelocityPass.draw();
+          velocity.swap();
+          
+          // Advect dye
+          advectDyeUniforms.uVelocity.value = velocity.read;
+          advectDyeUniforms.uSource.value = dye.read;
+          advectDyeUniforms.uDt.value = dt;
+          
+          ctx.setTarget(dye.write);
+          advectDyePass.draw();
+          dye.swap();
+          
+          // ===== DISPLAY =====
+          displayUniforms.uDye.value = dye.read;
+          ctx.setTarget(null);
+          ctx.autoClear = true;
+          displayPass.draw();
+          
+          // Update last mouse position
           lastMouseX = mouseX;
           lastMouseY = mouseY;
-
-          // Add splat from fake mouse if there's movement
-          if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
-            splat(mouseX, mouseY, dx, -dy);
-          }
-
-          // Advect velocity
-          advectionUniforms.params.value = [dt, velocityDissipation, 1/simRes, 1/simRes];
-          advectionUniforms.uVelocity.value = velocity.read;
-          advectionUniforms.uSource.value = velocity.read;
-          ctx!.setTarget(velocity.write);
-          ctx!.autoClear = false;
-          advectionPass.draw();
-          velocity.swap();
-
-          // Advect density (use dye resolution texel size)
-          advectionUniforms.params.value = [dt, densityDissipation, 1/dyeRes, 1/dyeRes];
-          advectionUniforms.uVelocity.value = velocity.read;
-          advectionUniforms.uSource.value = density.read;
-          ctx!.setTarget(density.write);
-          advectionPass.draw();
-          density.swap();
-
-          // Display to screen
-          displayUniforms.uDensity.value = density.read;
-          ctx!.setTarget(null);
-          ctx!.autoClear = true;
-          displayPass.draw();
-
+          
           animationId = requestAnimationFrame(frame);
         }
         
-        frame(0);
+        frame();
       } catch (error) {
         console.error('Failed to initialize WebGPU:', error);
       }
@@ -279,47 +549,65 @@ export default function FluidPage() {
 
   return (
     <div style={{ 
-      padding: 0, 
-      margin: 0, 
+      padding: '0', 
+      margin: '0',
       height: '100vh',
       width: '100vw',
       overflow: 'hidden',
-      background: '#0a0a0f'
+      backgroundColor: '#000'
     }}>
       <div style={{
         position: 'absolute',
-        top: '1.5rem',
-        left: '1.5rem',
+        top: '1rem',
+        left: '1rem',
         zIndex: 10,
-        color: 'rgba(255, 255, 255, 0.8)',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
+        color: '#fff',
+        fontFamily: 'system-ui, sans-serif',
+        textShadow: '0 2px 8px rgba(0,0,0,0.8)'
       }}>
-        <h1 style={{ 
-          margin: 0, 
-          fontSize: '1.5rem', 
-          fontWeight: 600,
-          letterSpacing: '-0.02em'
-        }}>
+        <h1 style={{ margin: '0 0 0.5rem 0', fontSize: '1.5rem', fontWeight: 600 }}>
           Fluid Simulation
         </h1>
-        <p style={{ 
-          margin: '0.5rem 0 0', 
-          fontSize: '0.875rem',
-          opacity: 0.6
-        }}>
-          GPU-accelerated fluid dynamics with automatic mouse
+        <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>
+          WebGPU Navier-Stokes • Curl, Vorticity & Pressure Solve
         </p>
       </div>
       <canvas 
         ref={canvasRef}
         style={{ 
-          width: '100%', 
-          height: '100%',
-          display: 'block'
+          width: '100vw', 
+          height: '100vh',
+          display: 'block',
         }}
         width={1024}
         height={768}
       />
     </div>
   );
+}
+
+// Helper function to convert HSL to RGB
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  let r: number, g: number, b: number;
+
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+
+  return [r, g, b];
 }
