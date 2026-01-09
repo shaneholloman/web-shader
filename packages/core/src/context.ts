@@ -399,16 +399,28 @@ export class GPUContext {
     commandEncoder: GPUCommandEncoder
   ): void {
     let view: GPUTextureView;
+    let format: GPUTextureFormat;
     let loadOp: GPULoadOp = this._autoClear ? "clear" : "load";
 
     if (this.currentTarget === null) {
       view = this.context.getCurrentTexture().createView();
+      format = this.format;
     } else if (this.currentTarget instanceof RenderTarget) {
       view = this.currentTarget.view;
+      // Get the actual GPU texture format from the render target
+      const formatMap: Record<string, GPUTextureFormat> = {
+        "rgba8unorm": "rgba8unorm",
+        "rgba16float": "rgba16float",
+        "r16float": "r16float",
+        "rg16float": "rg16float",
+        "r32float": "r32float",
+      };
+      format = formatMap[this.currentTarget.format] || "rgba8unorm";
     } else {
       // MRT - use first target for now (should handle properly)
       const views = this.currentTarget.getViews();
       view = views[0];
+      format = this.format; // TODO: Get format from MRT
     }
 
     const renderPassDescriptor: GPURenderPassDescriptor = {
@@ -422,7 +434,7 @@ export class GPUContext {
       ],
     };
 
-    drawable.drawInternal(commandEncoder, renderPassDescriptor, this.format);
+    drawable.drawInternal(commandEncoder, renderPassDescriptor, format);
   }
 
   /**
@@ -463,6 +475,9 @@ export class GPUContext {
    */
   dispose(): void {
     this.globalsBuffer.destroy();
+    // Unconfigure the canvas context before destroying the device
+    // This is required to allow re-initialization with a new device
+    this.context.unconfigure();
     this.device.destroy();
   }
 }

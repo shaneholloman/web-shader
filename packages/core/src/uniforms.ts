@@ -3,6 +3,7 @@
  */
 
 import type { Uniforms, GlobalUniforms, BlendMode, BlendConfig } from "./types";
+import { RenderTarget } from "./target";
 
 /**
  * Global uniforms structure size (in bytes)
@@ -80,18 +81,29 @@ function getUniformSize(value: any): number {
 
 /**
  * Calculate total uniform buffer size with alignment
+ * Skips texture uniforms (they don't go in the uniform buffer)
  */
 export function calculateUniformBufferSize(uniforms: Uniforms): number {
   let size = 0;
   for (const key in uniforms) {
     const value = uniforms[key].value;
+    
+    // Skip textures and samplers (they have their own bindings)
+    if (value && typeof value === "object") {
+      if ("createView" in value || "texture" in value) {
+        continue; // Skip texture uniforms
+      }
+    }
+    
     const valueSize = getUniformSize(value);
-    // Align to 16 bytes for struct members
-    size = Math.ceil(size / 16) * 16;
-    size += valueSize;
+    if (valueSize > 0) {
+      // Align to 16 bytes for struct members
+      size = Math.ceil(size / 16) * 16;
+      size += valueSize;
+    }
   }
-  // Final alignment to 16 bytes
-  return Math.ceil(size / 16) * 16;
+  // Final alignment to 16 bytes (minimum 16 if any uniforms exist)
+  return size > 0 ? Math.ceil(size / 16) * 16 : 0;
 }
 
 /**
@@ -137,6 +149,7 @@ export function writeUniformData(
 
 /**
  * Update uniform buffer from uniforms object
+ * Skips texture uniforms (they don't go in the uniform buffer)
  */
 export function updateUniformBuffer(
   device: GPUDevice,
@@ -144,11 +157,21 @@ export function updateUniformBuffer(
   uniforms: Uniforms,
   bufferSize: number
 ): void {
+  if (bufferSize === 0) return; // No uniform buffer needed
+  
   const data = new Float32Array(bufferSize / 4);
   let offset = 0;
 
   for (const key in uniforms) {
     const value = uniforms[key].value;
+    
+    // Skip textures and samplers (they have their own bindings)
+    if (value && typeof value === "object") {
+      if ("createView" in value || "texture" in value) {
+        continue; // Skip texture uniforms
+      }
+    }
+    
     // Align to 16 bytes
     offset = Math.ceil(offset / 16) * 16;
     const written = writeUniformData(data, offset, value);
@@ -244,15 +267,70 @@ export function collectTextureBindings(uniforms: Uniforms): Map<string, TextureB
       if ("createView" in value && typeof value.createView === "function") {
         textures.set(key, { texture: value as GPUTexture });
       }
-      // Check if it's a RenderTarget
-      else if ("texture" in value && "sampler" in value) {
-        textures.set(key, {
-          texture: value.texture,
-          sampler: value.sampler,
-        });
+      // Check if it's a RenderTarget or similar object with texture/sampler
+      else if ("texture" in value) {
+         // It might be a RenderTarget or PingPong buffer result
+         const texture = value.texture;
+         // It might have a sampler
+         const sampler = "sampler" in value ? value.sampler : undefined;
+         
+         textures.set(key, {
+           texture,
+           sampler
+         });
       }
     }
   }
   
   return textures;
+}
+
+/**
+ * Parsed bindings from WGSL
+ */
+export interface WGSLBindings {
+  uniformBuffer?: number;
+  textures: Map<string, number>;
+  samplers: Map<string, number>;
+  storage: Map<string, number>;
+}
+
+/**
+ * Parse bindings from WGSL code
+ * Looks for @group(1) @binding(N) var...
+ */
+export function parseBindGroup1Bindings(wgsl: string): WGSLBindings {
+  const bindings: WGSLBindings = {
+    textures: new Map(),
+    samplers: new Map(),
+    storage: new Map(),
+  };
+
+  // Regex to match group 1 bindings
+  // Matches: @group(1) @binding(N) var<type> name : type;
+  // OR: @group(1) @binding(N) var name : type;
+  const regex = /@group\(1\)\s+@binding\((\d+)\)\s+var(?:<([^>]+)>)?\s+(\w+)\s*:\s*([^;]+);/g;
+  
+  let match;
+  while ((match = regex.exec(wgsl)) !== null) {
+    const binding = parseInt(match[1]);
+    const varModifier = match[2]; // 'uniform', 'storage', etc.
+    const name = match[3];
+    const type = match[4].trim();
+
+    if (varModifier === 'uniform') {
+      bindings.uniformBuffer = binding;
+    } else if (varModifier === 'storage' || type.includes('array<')) {
+      // Storage buffer
+      bindings.storage.set(name, binding);
+    } else if (type.includes('texture_')) {
+      // Texture
+      bindings.textures.set(name, binding);
+    } else if (type.includes('sampler')) {
+      // Sampler
+      bindings.samplers.set(name, binding);
+    }
+  }
+
+  return bindings;
 }

@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { gpu } from 'ralph-gpu';
+import { gpu, GPUContext } from 'ralph-gpu';
 
 export default function RenderTargetPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let animationId: number;
+    let ctx: GPUContext | null = null;
+    let disposed = false;
     
     async function init() {
       if (!canvasRef.current) return;
@@ -18,10 +20,15 @@ export default function RenderTargetPage() {
           return;
         }
 
-        const ctx = await gpu.init(canvasRef.current, {
+        ctx = await gpu.init(canvasRef.current, {
           dpr: Math.min(window.devicePixelRatio, 2),
           debug: true,
         });
+
+        if (disposed) {
+          ctx.dispose();
+          return;
+        }
 
         // Create a render target
         const sceneBuffer = ctx.target(512, 512, {
@@ -48,7 +55,7 @@ export default function RenderTargetPage() {
 
         // Uniforms with texture reference
         const displayUniforms = {
-          inputTex: { value: sceneBuffer.texture },
+          inputTex: { value: sceneBuffer },
         };
 
         // Display pass - show the rendered texture
@@ -70,12 +77,13 @@ export default function RenderTargetPage() {
         `, { uniforms: displayUniforms });
 
         function frame() {
+          if (disposed) return;
           // Render to the target
-          ctx.setTarget(sceneBuffer);
+          ctx!.setTarget(sceneBuffer);
           scenePass.draw();
 
           // Render to screen
-          ctx.setTarget(null);
+          ctx!.setTarget(null);
           displayPass.draw();
 
           animationId = requestAnimationFrame(frame);
@@ -90,8 +98,12 @@ export default function RenderTargetPage() {
     init();
 
     return () => {
+      disposed = true;
       if (animationId) {
         cancelAnimationFrame(animationId);
+      }
+      if (ctx) {
+        ctx.dispose();
       }
     };
   }, []);

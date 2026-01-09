@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { gpu } from 'ralph-gpu';
+import { gpu, GPUContext } from 'ralph-gpu';
 
 export default function UniformsPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let animationId: number;
+    let ctx: GPUContext | null = null;
+    let disposed = false;
     
     async function init() {
       if (!canvasRef.current) return;
@@ -18,10 +20,15 @@ export default function UniformsPage() {
           return;
         }
 
-        const ctx = await gpu.init(canvasRef.current, {
+        ctx = await gpu.init(canvasRef.current, {
           dpr: Math.min(window.devicePixelRatio, 2),
           debug: true,
         });
+
+        if (disposed) {
+          ctx.dispose();
+          return;
+        }
 
         // Define uniforms object (Three.js style)
         const waveUniforms = {
@@ -48,6 +55,7 @@ export default function UniformsPage() {
         `, { uniforms: waveUniforms });
 
         function frame() {
+          if (disposed) return;
           // Animate uniforms
           waveUniforms.amplitude.value = Math.sin(performance.now() * 0.001) * 0.3 + 0.3;
           waveUniforms.frequency.value = Math.cos(performance.now() * 0.0005) * 5.0 + 15.0;
@@ -65,8 +73,12 @@ export default function UniformsPage() {
     init();
 
     return () => {
+      disposed = true;
       if (animationId) {
         cancelAnimationFrame(animationId);
+      }
+      if (ctx) {
+        ctx.dispose();
       }
     };
   }, []);

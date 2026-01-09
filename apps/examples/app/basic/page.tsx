@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { gpu } from 'ralph-gpu';
+import { gpu, GPUContext } from 'ralph-gpu';
 
 export default function BasicPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let animationId: number;
+    let ctx: GPUContext | null = null;
+    let disposed = false;
     
     async function init() {
       if (!canvasRef.current) return;
@@ -20,10 +22,16 @@ export default function BasicPage() {
         }
 
         // Initialize context
-        const ctx = await gpu.init(canvasRef.current, {
+        ctx = await gpu.init(canvasRef.current, {
           dpr: Math.min(window.devicePixelRatio, 2),
           debug: true,
         });
+
+        // Check if we were disposed during async init
+        if (disposed) {
+          ctx.dispose();
+          return;
+        }
 
         // Create a simple gradient pass
         const gradient = ctx.pass(/* wgsl */ `
@@ -35,6 +43,7 @@ export default function BasicPage() {
         `);
 
         function frame() {
+          if (disposed) return;
           gradient.draw();
           animationId = requestAnimationFrame(frame);
         }
@@ -48,8 +57,12 @@ export default function BasicPage() {
     init();
 
     return () => {
+      disposed = true;
       if (animationId) {
         cancelAnimationFrame(animationId);
+      }
+      if (ctx) {
+        ctx.dispose();
       }
     };
   }, []);

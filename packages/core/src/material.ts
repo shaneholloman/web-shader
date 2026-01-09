@@ -10,6 +10,7 @@ import {
   updateUniformBuffer,
   getBlendState,
   collectTextureBindings,
+  parseBindGroup1Bindings,
 } from "./uniforms";
 import type { StorageBuffer } from "./storage";
 
@@ -20,16 +21,14 @@ export class Material {
   private device: GPUDevice;
   private wgsl: string;
   private _uniforms: Uniforms;
-  private pipeline: GPURenderPipeline | null = null;
+  private pipelines = new Map<string, GPURenderPipeline>();
   private uniformBuffer: GPUBuffer | null = null;
   private uniformBufferSize = 0;
-  private bindGroup: GPUBindGroup | null = null;
   private storageBuffers = new Map<string, StorageBuffer>();
   private globalsBuffer: GPUBuffer;
   private blendMode: MaterialOptions["blend"];
   private vertexCount: number;
   private instances: number;
-  private needsRebuild = true;
   private context: import("./context").GPUContext;
 
   constructor(
@@ -48,13 +47,15 @@ export class Material {
     this.instances = options.instances || 1;
     this.context = context;
 
-    // Calculate uniform buffer size
+    // Calculate uniform buffer size (excluding textures)
     if (Object.keys(this._uniforms).length > 0) {
       this.uniformBufferSize = calculateUniformBufferSize(this._uniforms);
-      this.uniformBuffer = device.createBuffer({
-        size: this.uniformBufferSize,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
+      if (this.uniformBufferSize > 0) {
+        this.uniformBuffer = device.createBuffer({
+          size: this.uniformBufferSize,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+      }
     }
   }
 
@@ -66,9 +67,13 @@ export class Material {
   }
 
   /**
-   * Build the render pipeline (lazy)
+   * Get or build pipeline for a specific format
    */
-  private buildPipeline(format: GPUTextureFormat): void {
+  private getPipeline(format: GPUTextureFormat): GPURenderPipeline {
+    if (this.pipelines.has(format)) {
+      return this.pipelines.get(format)!;
+    }
+
     // Prepend globals to shader
     const fullWGSL = `
 ${getGlobalsWGSL()}
@@ -96,109 +101,11 @@ ${this.wgsl}
         }
       });
 
-      // Create bind group layout
-      const bindGroupLayoutEntries: GPUBindGroupLayoutEntry[] = [];
-      const bindGroupEntries: GPUBindGroupEntry[] = [];
-
-      let binding = 0;
-
-      // Add uniform buffer if present
-      if (this.uniformBuffer) {
-        bindGroupLayoutEntries.push({
-          binding: binding,
-          visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-          buffer: { type: "uniform" },
-        });
-        bindGroupEntries.push({
-          binding: binding,
-          resource: { buffer: this.uniformBuffer },
-        });
-        binding++;
-      }
-
-      // Add textures and samplers
-      const textures = collectTextureBindings(this._uniforms);
-      for (const [name, { texture, sampler }] of textures) {
-        // Add texture binding
-        bindGroupLayoutEntries.push({
-          binding: binding,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: "float" },
-        });
-        bindGroupEntries.push({
-          binding: binding,
-          resource: texture.createView(),
-        });
-        binding++;
-
-        // Add sampler binding
-        if (sampler) {
-          bindGroupLayoutEntries.push({
-            binding: binding,
-            visibility: GPUShaderStage.FRAGMENT,
-            sampler: { type: "filtering" },
-          });
-          bindGroupEntries.push({
-            binding: binding,
-            resource: sampler,
-          });
-          binding++;
-        }
-      }
-
-      // Add storage buffers
-      for (const [name, buffer] of this.storageBuffers) {
-        bindGroupLayoutEntries.push({
-          binding: binding,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: "read-only-storage" },
-        });
-        bindGroupEntries.push({
-          binding: binding,
-          resource: { buffer: buffer.gpuBuffer },
-        });
-        binding++;
-      }
-
-      // Create bind group layout for globals (group 0)
-      const globalsBindGroupLayout = this.device.createBindGroupLayout({
-        entries: [
-          {
-            binding: 0,
-            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-            buffer: { type: "uniform" },
-          },
-        ],
-      });
-
-      // Create user bind group layout (group 1)
-      const userBindGroupLayout = bindGroupLayoutEntries.length > 0
-        ? this.device.createBindGroupLayout({ entries: bindGroupLayoutEntries })
-        : null;
-
-      // Create user bind group
-      if (userBindGroupLayout && bindGroupEntries.length > 0) {
-        this.bindGroup = this.device.createBindGroup({
-          layout: userBindGroupLayout,
-          entries: bindGroupEntries,
-        });
-      }
-
-      // Create pipeline layout
-      const layouts = [globalsBindGroupLayout];
-      if (userBindGroupLayout) {
-        layouts.push(userBindGroupLayout);
-      }
-
-      const pipelineLayout = this.device.createPipelineLayout({
-        bindGroupLayouts: layouts,
-      });
-
-      // Create render pipeline
+      // Create render pipeline with auto layout
       const blendState = getBlendState(this.blendMode);
-
-      this.pipeline = this.device.createRenderPipeline({
-        layout: pipelineLayout,
+      
+      const pipeline = this.device.createRenderPipeline({
+        layout: 'auto',
         vertex: {
           module: shaderModule,
           entryPoint: "vs_main",
@@ -218,17 +125,13 @@ ${this.wgsl}
         },
       });
 
-      this.needsRebuild = false;
+      this.pipelines.set(format, pipeline);
+      return pipeline;
     } catch (error) {
       if (error instanceof ShaderCompileError) {
         throw error;
       }
-      throw new ShaderCompileError(
-        (error as Error).message,
-        0,
-        0,
-        fullWGSL
-      );
+      throw error;
     }
   }
 
@@ -237,7 +140,7 @@ ${this.wgsl}
    */
   storage(name: string, buffer: StorageBuffer): void {
     this.storageBuffers.set(name, buffer);
-    this.needsRebuild = true;
+    this.pipelines.clear(); // Rebuild pipelines
   }
 
   /**
@@ -255,14 +158,7 @@ ${this.wgsl}
     renderPassDescriptor: GPURenderPassDescriptor,
     format: GPUTextureFormat
   ): void {
-    // Build pipeline if needed
-    if (!this.pipeline || this.needsRebuild) {
-      this.buildPipeline(format);
-    }
-
-    if (!this.pipeline) {
-      throw new Error("Failed to create pipeline");
-    }
+    const pipeline = this.getPipeline(format);
 
     // Update uniforms
     if (this.uniformBuffer && this.uniformBufferSize > 0) {
@@ -276,11 +172,11 @@ ${this.wgsl}
 
     // Create render pass
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-    passEncoder.setPipeline(this.pipeline);
+    passEncoder.setPipeline(pipeline);
 
     // Bind globals (group 0)
     const globalsBindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
+      layout: pipeline.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
@@ -291,8 +187,70 @@ ${this.wgsl}
     passEncoder.setBindGroup(0, globalsBindGroup);
 
     // Bind user uniforms (group 1)
-    if (this.bindGroup) {
-      passEncoder.setBindGroup(1, this.bindGroup);
+    // We recreate this to ensure we pick up latest textures
+    const bindings = parseBindGroup1Bindings(this.wgsl);
+    const bindGroupEntries: GPUBindGroupEntry[] = [];
+
+    // Add uniform buffer if present and used
+    if (this.uniformBuffer && bindings.uniformBuffer !== undefined) {
+      bindGroupEntries.push({
+        binding: bindings.uniformBuffer,
+        resource: { buffer: this.uniformBuffer },
+      });
+    }
+
+    // Add textures and samplers
+    const textures = collectTextureBindings(this._uniforms);
+    for (const [name, { texture, sampler }] of textures) {
+      // Find texture binding
+      const textureBinding = bindings.textures.get(name);
+      if (textureBinding !== undefined) {
+        bindGroupEntries.push({
+          binding: textureBinding,
+          resource: texture.createView(),
+        });
+
+        // Add sampler binding if present
+        if (sampler) {
+          // Try to find sampler binding by name convention
+          let samplerBinding = bindings.samplers.get(`${name}Sampler`);
+          if (samplerBinding === undefined) {
+            samplerBinding = bindings.samplers.get(`${name}_sampler`);
+          }
+          if (samplerBinding === undefined && name.endsWith("Tex")) {
+            samplerBinding = bindings.samplers.get(`${name.slice(0, -3)}Sampler`);
+          }
+          
+          if (samplerBinding !== undefined) {
+            bindGroupEntries.push({
+              binding: samplerBinding,
+              resource: sampler,
+            });
+          } else {
+            console.warn(`Could not find sampler binding for texture '${name}'. Expected '${name}Sampler', '${name}_sampler', or similar.`);
+          }
+        }
+      }
+    }
+
+    // Add storage buffers
+    for (const [name, buffer] of this.storageBuffers) {
+      const storageBinding = bindings.storage.get(name);
+      if (storageBinding !== undefined) {
+        bindGroupEntries.push({
+          binding: storageBinding,
+          resource: { buffer: buffer.gpuBuffer },
+        });
+      }
+    }
+
+    if (bindGroupEntries.length > 0) {
+      const userBindGroupLayout = pipeline.getBindGroupLayout(1);
+      const bindGroup = this.device.createBindGroup({
+        layout: userBindGroupLayout,
+        entries: bindGroupEntries,
+      });
+      passEncoder.setBindGroup(1, bindGroup);
     }
 
     // Draw instances

@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { gpu } from 'ralph-gpu';
+import { gpu, GPUContext } from 'ralph-gpu';
 
 export default function ComputePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let animationId: number;
+    let ctx: GPUContext | null = null;
+    let disposed = false;
     
     async function init() {
       if (!canvasRef.current) return;
@@ -18,10 +20,15 @@ export default function ComputePage() {
           return;
         }
 
-        const ctx = await gpu.init(canvasRef.current, {
+        ctx = await gpu.init(canvasRef.current, {
           dpr: Math.min(window.devicePixelRatio, 2),
           debug: true,
         });
+
+        if (disposed) {
+          ctx.dispose();
+          return;
+        }
 
         // Create storage buffer for particle data
         const particleCount = 1000;
@@ -148,6 +155,7 @@ export default function ComputePage() {
         particleMaterial.storage("particles", particleBuffer);
 
         function frame() {
+          if (disposed) return;
           // Update particles with compute shader
           computeShader.dispatch(Math.ceil(particleCount / 64));
           
@@ -166,8 +174,12 @@ export default function ComputePage() {
     init();
 
     return () => {
+      disposed = true;
       if (animationId) {
         cancelAnimationFrame(animationId);
+      }
+      if (ctx) {
+        ctx.dispose();
       }
     };
   }, []);

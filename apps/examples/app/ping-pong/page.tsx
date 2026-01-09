@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { gpu } from 'ralph-gpu';
+import { gpu, GPUContext } from 'ralph-gpu';
 
 export default function PingPongPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let animationId: number;
+    let ctx: GPUContext | null = null;
+    let disposed = false;
     
     async function init() {
       if (!canvasRef.current) return;
@@ -18,10 +20,15 @@ export default function PingPongPage() {
           return;
         }
 
-        const ctx = await gpu.init(canvasRef.current, {
+        ctx = await gpu.init(canvasRef.current, {
           dpr: Math.min(window.devicePixelRatio, 2),
           debug: true,
         });
+
+        if (disposed) {
+          ctx.dispose();
+          return;
+        }
 
         // Create ping-pong buffers for simulation
         const simulation = ctx.pingPong(128, 128, { 
@@ -43,7 +50,7 @@ export default function PingPongPage() {
 
         // Diffusion step
         const diffusionUniforms = {
-          inputTex: { value: simulation.read.texture },
+          inputTex: { value: simulation.read },
           diffusion: { value: 0.98 },
         };
 
@@ -78,7 +85,7 @@ export default function PingPongPage() {
 
         // Display pass
         const displayUniforms = {
-          inputTex: { value: simulation.read.texture },
+          inputTex: { value: simulation.read },
         };
 
         const displayPass = ctx.pass(/* wgsl */ `
@@ -101,22 +108,21 @@ export default function PingPongPage() {
         initPass.draw();
         simulation.swap();
 
-        let initialized = true;
-
         function frame() {
+          if (disposed) return;
           // Update uniform references
-          diffusionUniforms.inputTex.value = simulation.read.texture;
-          displayUniforms.inputTex.value = simulation.read.texture;
+          diffusionUniforms.inputTex.value = simulation.read;
+          displayUniforms.inputTex.value = simulation.read;
 
           // Diffusion step
-          ctx.setTarget(simulation.write);
-          ctx.autoClear = false;
+          ctx!.setTarget(simulation.write);
+          ctx!.autoClear = false;
           diffusionPass.draw();
           simulation.swap();
 
           // Display
-          ctx.setTarget(null);
-          ctx.autoClear = true;
+          ctx!.setTarget(null);
+          ctx!.autoClear = true;
           displayPass.draw();
 
           animationId = requestAnimationFrame(frame);
@@ -131,8 +137,12 @@ export default function PingPongPage() {
     init();
 
     return () => {
+      disposed = true;
       if (animationId) {
         cancelAnimationFrame(animationId);
+      }
+      if (ctx) {
+        ctx.dispose();
       }
     };
   }, []);
