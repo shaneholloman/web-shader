@@ -11,7 +11,6 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 // Get configuration from environment
 const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY;
-const AI_GATEWAY_BASE_URL = process.env.AI_GATEWAY_BASE_URL;
 const AGENT_MODEL = process.env.AGENT_MODEL || "anthropic/claude-sonnet-4-20250514";
 const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 
@@ -20,23 +19,9 @@ if (!AI_GATEWAY_API_KEY) {
   process.exit(1);
 }
 
-if (!AI_GATEWAY_BASE_URL) {
-  console.error("❌ Missing AI_GATEWAY_BASE_URL in environment");
-  console.error("   Example: https://api.openai.com/v1 or your custom gateway URL");
-  process.exit(1);
-}
-
-// Create the AI gateway provider
-const gateway = createOpenAICompatible({
-  name: "ai-gateway",
-  baseURL: AI_GATEWAY_BASE_URL,
-  apiKey: AI_GATEWAY_API_KEY,
-});
-
 console.log("🤖 Ralph Agent - Repository Context Generator");
 console.log("━".repeat(50));
 console.log(`📁 Project: ${PROJECT_ROOT}`);
-console.log(`🌐 Gateway: ${AI_GATEWAY_BASE_URL}`);
 console.log(`🧠 Model: ${AGENT_MODEL}`);
 console.log("━".repeat(50));
 
@@ -71,7 +56,7 @@ async function main() {
   const startTime = Date.now();
 
   const agent = new LoopAgent({
-    model: gateway(AGENT_MODEL),
+    model: AGENT_MODEL,
     task: TASK,
     rules: [explorationRule, brainRule],
     limits: {

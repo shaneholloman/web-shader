@@ -31,10 +31,12 @@ if (name === "done") {
 ## Consequences
 
 ### Positive
+
 - Simple implementation
 - Works with both default and custom done tools
 - No coupling between tools and loop state
 
 ### Negative
+
 - Wrapping adds slight overhead
 - Type casting needed due to Tool interface

@@ -33,13 +33,13 @@ Before making changes, read `.brain/index.md` to understand the project structur
 
 ## File Reference
 
-| File | Purpose |
-|------|---------|
-| `index.md` | Overview and quick reference |
+| File              | Purpose                                         |
+| ----------------- | ----------------------------------------------- |
+| `index.md`        | Overview and quick reference                    |
 | `architecture.md` | High-level design, component diagram, data flow |
-| `conventions.md` | Code style, TypeScript patterns, naming |
-| `progress.md` | What's done, in progress, and next |
-| `decisions/` | Architectural decisions with context |
+| `conventions.md`  | Code style, TypeScript patterns, naming         |
+| `progress.md`     | What's done, in progress, and next              |
+| `decisions/`      | Architectural decisions with context            |
 
 ---
 

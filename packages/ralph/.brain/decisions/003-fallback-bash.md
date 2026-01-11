@@ -21,6 +21,7 @@ export async function createBashTools() {
 ```
 
 Fallback uses:
+
 - `child_process.exec` for bash commands
 - `fs/promises` for file operations
 
@@ -33,11 +34,13 @@ Fallback uses:
 ## Consequences
 
 ### Positive
+
 - Works in any Node.js environment
 - Graceful degradation
 - Same tool interface
 
 ### Negative
+
 - Fallback lacks bash-tool's sandbox features
 - Two code paths to maintain
 - Less secure in production (no sandboxing)
