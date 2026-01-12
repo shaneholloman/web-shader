@@ -52,6 +52,8 @@ export class GPUContext {
   private viewportState: { x: number; y: number; width: number; height: number } | null = null;
   private scissorState: { x: number; y: number; width: number; height: number } | null = null;
   private _dpr: number;
+  private _dprConfig: number | [number, number] | undefined;
+  private _autoResize: boolean;
   private debug: boolean;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -66,7 +68,9 @@ export class GPUContext {
     this.context = context;
     this.canvas = canvas;
     this.format = format;
-    this._dpr = options.dpr ?? Math.min(window.devicePixelRatio, 2);
+    this._dprConfig = options.dpr;
+    this._autoResize = options.autoResize || false;
+    this._dpr = this.calculateEffectiveDpr();
     this.debug = options.debug || false;
 
     // Set canvas size based on display size or canvas attributes
@@ -81,11 +85,29 @@ export class GPUContext {
       // Setup ResizeObserver to track canvas size changes
       this.resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
-          const { width, height } = entry.contentRect;
-          this._width = Math.floor(width * this._dpr);
-          this._height = Math.floor(height * this._dpr);
-          this.canvas.width = this._width;
-          this.canvas.height = this._height;
+          // Use contentBoxSize to get accurate CSS dimensions without triggering feedback loop
+          const contentBoxSize = entry.contentBoxSize?.[0];
+          if (contentBoxSize) {
+            const cssWidth = contentBoxSize.inlineSize;
+            const cssHeight = contentBoxSize.blockSize;
+            
+            // Recalculate effective DPR
+            this._dpr = this.calculateEffectiveDpr();
+            
+            // Set internal rendering resolution = CSS size * DPR
+            this._width = Math.floor(cssWidth * this._dpr);
+            this._height = Math.floor(cssHeight * this._dpr);
+            this.canvas.width = this._width;
+            this.canvas.height = this._height;
+          } else {
+            // Fallback for older browsers
+            const { width, height } = entry.contentRect;
+            this._dpr = this.calculateEffectiveDpr();
+            this._width = Math.floor(width * this._dpr);
+            this._height = Math.floor(height * this._dpr);
+            this.canvas.width = this._width;
+            this.canvas.height = this._height;
+          }
         }
       });
       this.resizeObserver.observe(canvas);
@@ -115,6 +137,28 @@ export class GPUContext {
     };
 
     this.updateGlobals();
+  }
+
+  /**
+   * Calculate effective DPR based on configuration and mode
+   */
+  private calculateEffectiveDpr(): number {
+    if (this._autoResize) {
+      if (Array.isArray(this._dprConfig)) {
+        // Clamp device DPR to [min, max] range
+        const [min, max] = this._dprConfig;
+        return Math.max(min, Math.min(max, window.devicePixelRatio));
+      } else if (typeof this._dprConfig === "number") {
+        // Fixed DPR overrides device DPR
+        return this._dprConfig;
+      } else {
+        // Default: cap at 2
+        return Math.min(window.devicePixelRatio, 2);
+      }
+    } else {
+      // When NOT using autoResize, DPR is not applied
+      return 1;
+    }
   }
 
   /**
@@ -303,23 +347,32 @@ export class GPUContext {
 
   /**
    * Create a render target
+   * If width/height not specified, uses canvas dimensions
    */
-  target(width: number, height: number, options?: RenderTargetOptions): RenderTarget {
-    return new RenderTarget(this.device, width, height, options);
+  target(width?: number, height?: number, options?: RenderTargetOptions): RenderTarget {
+    const w = width ?? this._width;
+    const h = height ?? this._height;
+    return new RenderTarget(this.device, w, h, options);
   }
 
   /**
    * Create a ping-pong buffer
+   * If width/height not specified, uses canvas dimensions
    */
-  pingPong(width: number, height: number, options?: RenderTargetOptions): PingPongTarget {
-    return new PingPongTarget(this.device, width, height, options);
+  pingPong(width?: number, height?: number, options?: RenderTargetOptions): PingPongTarget {
+    const w = width ?? this._width;
+    const h = height ?? this._height;
+    return new PingPongTarget(this.device, w, h, options);
   }
 
   /**
    * Create multiple render targets
+   * If width/height not specified, uses canvas dimensions
    */
-  mrt(outputs: MRTOutputs, width: number, height: number): MultiRenderTarget {
-    return createMultiRenderTarget(this.device, outputs, width, height);
+  mrt(outputs: MRTOutputs, width?: number, height?: number): MultiRenderTarget {
+    const w = width ?? this._width;
+    const h = height ?? this._height;
+    return createMultiRenderTarget(this.device, outputs, w, h);
   }
 
   /**

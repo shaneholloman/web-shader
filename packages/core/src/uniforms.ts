@@ -317,13 +317,29 @@ export interface TextureBinding {
 
 export function collectTextureBindings(uniforms: Uniforms): Map<string, TextureBinding> {
   const textures = new Map<string, TextureBinding>();
+  const samplers = new Map<string, GPUSampler>();
   
+  // First pass: collect all samplers
+  for (const [key, uniform] of Object.entries(uniforms)) {
+    const value = uniform.value;
+    if (value && typeof value === "object" && !(value instanceof Float32Array) && !Array.isArray(value)) {
+      // Check if it's a GPUSampler (has compare method)
+      if ("compare" in value || ("addressModeU" in value && "magFilter" in value)) {
+        samplers.set(key, value as GPUSampler);
+      }
+    }
+  }
+  
+  // Second pass: collect textures and match with samplers
   for (const [key, uniform] of Object.entries(uniforms)) {
     const value = uniform.value;
     if (value && typeof value === "object" && !(value instanceof Float32Array) && !Array.isArray(value)) {
       // Check if it's a GPUTexture
       if ("createView" in value && typeof value.createView === "function") {
-        textures.set(key, { texture: value as GPUTexture });
+        const texture = value as GPUTexture;
+        // Look for matching sampler by convention: texName -> texNameSampler or texSampler
+        let sampler = samplers.get(key + "Sampler") || samplers.get(key.replace(/Tex$/, "Sampler"));
+        textures.set(key, { texture, sampler });
       }
       // Check if it's a RenderTarget or similar object with texture/sampler
       else if ("texture" in value) {
@@ -418,7 +434,8 @@ export type SimpleUniformValue =
   | [number, number, number, number]
   | Float32Array
   | { texture: GPUTexture; sampler?: GPUSampler }  // RenderTarget-like
-  | GPUTexture;
+  | GPUTexture
+  | GPUSampler;
 
 export interface SimpleUniforms {
   [key: string]: SimpleUniformValue;
@@ -451,9 +468,14 @@ export function inferWGSLType(value: SimpleUniformValue): string | null {
 
 /**
  * Check if a value is a texture (RenderTarget, PingPong read, or raw GPUTexture)
+ * Excludes GPUSampler objects
  */
 export function isTextureValue(value: SimpleUniformValue): boolean {
   if (value && typeof value === "object" && !(value instanceof Float32Array)) {
+    // Check if it's a GPUSampler first (exclude it)
+    if ("compare" in value || ("addressModeU" in value && "magFilter" in value)) {
+      return false;
+    }
     // Raw GPUTexture
     if ("createView" in value && typeof (value as any).createView === "function") {
       return true;
@@ -613,12 +635,27 @@ export function updateSimpleUniformBuffer(
  */
 export function collectSimpleTextureBindings(simpleUniforms: SimpleUniforms): Map<string, TextureBinding> {
   const textures = new Map<string, TextureBinding>();
+  const samplers = new Map<string, GPUSampler>();
   
+  // First pass: collect all samplers
+  for (const [key, value] of Object.entries(simpleUniforms)) {
+    if (value && typeof value === "object" && !(value instanceof Float32Array)) {
+      // Check if it's a GPUSampler (has compare method or sampler properties)
+      if ("compare" in value || ("addressModeU" in value && "magFilter" in value)) {
+        samplers.set(key, value as GPUSampler);
+      }
+    }
+  }
+  
+  // Second pass: collect textures and match with samplers
   for (const [key, value] of Object.entries(simpleUniforms)) {
     if (value && typeof value === "object" && !(value instanceof Float32Array)) {
       // Check if it's a GPUTexture
       if ("createView" in value && typeof (value as any).createView === "function") {
-        textures.set(key, { texture: value as GPUTexture });
+        const texture = value as GPUTexture;
+        // Look for matching sampler by convention: texName -> texNameSampler or texSampler
+        let sampler = samplers.get(key + "Sampler") || samplers.get(key.replace(/Tex$/, "Sampler"));
+        textures.set(key, { texture, sampler });
       }
       // Check if it's a RenderTarget or similar object with texture/sampler
       else if ("texture" in value) {

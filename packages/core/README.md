@@ -72,10 +72,34 @@ if (!gpu.isSupported()) {
 
 // Initialize with options
 const ctx = await gpu.init(canvas, {
-  dpr: Math.min(window.devicePixelRatio, 2),
+  dpr: Math.min(window.devicePixelRatio, 2), // Fixed DPR
   debug: true,
 });
+
+// Auto-resize with DPR clamping (recommended for high-DPI displays)
+const ctx = await gpu.init(canvas, {
+  autoResize: true,
+  dpr: [1, 2], // Clamp device DPR between 1 and 2
+});
+
+// Or with fixed DPR override when autoResize is enabled
+const ctx = await gpu.init(canvas, {
+  autoResize: true,
+  dpr: 1.5, // Always use 1.5, regardless of device DPR
+});
 ```
+
+#### DPR Configuration
+
+The `dpr` option controls device pixel ratio handling:
+
+- **`number`**: Fixed DPR value
+  - When `autoResize: true`: Overrides device DPR
+  - When `autoResize: false`: Ignored (no DPR multiplication)
+- **`[min, max]`**: Clamp device DPR to range (only with `autoResize: true`)
+  - Example: `[1, 2]` clamps to 1-2x on any display
+  - Prevents texture size limits on high-DPI displays (4K+)
+- **Default**: `Math.min(devicePixelRatio, 2)` when `autoResize: true`, otherwise `1`
 
 ### 2. Create a Fullscreen Pass
 
@@ -120,6 +144,24 @@ const wave = ctx.pass(
 // Update uniforms anywhere
 uniforms.amplitude.value = 0.8;
 uniforms.color.value = [0.2, 1.0, 0.5];
+```
+
+#### Texture Uniforms
+
+Textures can be passed as full `RenderTarget` objects (includes texture + sampler) or separately:
+
+```typescript
+const uniforms = {
+  // Option 1: Pass full RenderTarget (auto extracts texture + sampler)
+  inputTex: { value: renderTarget },
+  
+  // Option 2: Pass texture and sampler separately
+  inputTex: { value: renderTarget.texture }, // GPUTexture
+  inputSampler: { value: mySampler }, // GPUSampler (optional, matched by name)
+};
+
+// In WGSL, samplers are automatically matched by naming convention:
+// inputTex → inputSampler or inputTexSampler
 ```
 
 ## Usage with React
@@ -218,20 +260,26 @@ struct Globals {
 ## Render Targets
 
 ```typescript
-// Create offscreen target
+// Create offscreen target with explicit size
 const buffer = ctx.target(512, 512, {
   format: "rgba16float", // "rgba8unorm" | "rgba16float" | "r16float" | "rg16float"
   filter: "linear", // "linear" | "nearest"
   wrap: "clamp", // "clamp" | "repeat" | "mirror"
 });
 
+// Or auto-size to canvas dimensions (no arguments needed)
+const canvasSizedBuffer = ctx.target();
+
 // Render to target
 ctx.setTarget(buffer);
 scenePass.draw();
 
-// Use as texture
+// Use as texture in uniforms (pass full RenderTarget or just .texture)
 const displayUniforms = {
-  inputTex: { value: buffer.texture },
+  inputTex: { value: buffer }, // Full RenderTarget (includes texture + sampler)
+  // OR
+  inputTex: { value: buffer.texture }, // Just the GPUTexture
+  inputSampler: { value: mySampler }, // Explicit sampler (optional)
 };
 ctx.setTarget(null); // Back to screen
 displayPass.draw();
@@ -242,10 +290,16 @@ displayPass.draw();
 For iterative effects like fluid simulation, diffusion, and multi-pass blur:
 
 ```typescript
+// Explicit size
 const velocity = ctx.pingPong(128, 128, { format: "rg16float" });
 
+// Or auto-size to canvas
+const canvasSized = ctx.pingPong();
+
 // Read from .read, write to .write
-advectionUniforms.source.value = velocity.read.texture;
+advectionUniforms.source.value = velocity.read; // Full RenderTarget
+// OR
+advectionUniforms.source.value = velocity.read.texture; // Just GPUTexture
 ctx.setTarget(velocity.write);
 advection.draw();
 
@@ -384,9 +438,9 @@ gpu.init(canvas, options?)                 // → Promise<GPUContext>
 ctx.pass(fragmentWGSL, options?)           // → Pass
 ctx.material(wgsl, options?)               // → Material
 ctx.compute(wgsl, options?)                // → ComputeShader
-ctx.target(width, height, options?)        // → RenderTarget
-ctx.pingPong(width, height, options?)      // → PingPongTarget
-ctx.mrt(outputs, width, height)            // → MultiRenderTarget
+ctx.target(width?, height?, options?)      // → RenderTarget (auto-sizes to canvas if omitted)
+ctx.pingPong(width?, height?, options?)    // → PingPongTarget (auto-sizes to canvas if omitted)
+ctx.mrt(outputs, width?, height?)          // → MultiRenderTarget (auto-sizes to canvas if omitted)
 ctx.storage(byteSize)                      // → StorageBuffer
 
 ctx.setTarget(target | null)               // Set render target

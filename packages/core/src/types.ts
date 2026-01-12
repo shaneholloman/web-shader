@@ -73,8 +73,13 @@ export interface RenderTargetOptions {
  * GPU context initialization options
  */
 export interface GPUContextOptions {
-  /** Device pixel ratio for high-DPI displays (default: 1) */
-  dpr?: number;
+  /** 
+   * Device pixel ratio for high-DPI displays
+   * - number: Fixed DPR (overrides device DPR when autoResize enabled)
+   * - [min, max]: Clamp device DPR to this range when autoResize enabled
+   * - default: Math.min(devicePixelRatio, 2)
+   */
+  dpr?: number | [number, number];
   /** Enable debug mode with extra validation */
   debug?: boolean;
   /** Automatically resize canvas to match display size using ResizeObserver (default: false) */
