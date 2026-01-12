@@ -99,30 +99,32 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
 
 // Extracted blur size calculation for consistency between blur and debug shaders
 const BLUR_CALCULATION_WGSL = /* wgsl */ `
-  // Calculate blur size with diagonal split through center
-  // Top-right side: no blur, Bottom-left side: radial blur
-  fn calculateBlurSize(uv: vec2f, maxBlurSize: f32) -> f32 {
+  // Calculate blur size with diagonal split through center at a given angle
+  // One side has no blur, other side has radial blur
+  fn calculateBlurSize(uv: vec2f, maxBlurSize: f32, angleRadians: f32) -> f32 {
     // Calculate distance from center (circular component)
     let centerDist = length(uv - 0.5) * sqrt(2.0);
     
-    // Diagonal split through center (45 degree line)
-    // In UV space: diagonal from top-right (1,0) to bottom-left (0,1) passes through (0.5, 0.5)
-    // Points satisfying x + y = 1 are on the diagonal
-    // Signed distance: positive = bottom-left side, negative = top-right side
-    let diagonalDist = (uv.x + uv.y - 1.0) / sqrt(2.0);
+    // Convert UV to centered coordinates
+    let centered = uv - 0.5;
+    
+    // Rotate the split line by the given angle
+    // We calculate signed distance to a line through origin at the given angle
+    // Line perpendicular to angle: cos(angle)*x + sin(angle)*y = 0
+    let diagonalDist = cos(angleRadians) * centered.x + sin(angleRadians) * centered.y;
     
     // Convert to 0-1 factor with smooth transition
     // smoothstep gives smooth transition across the diagonal line
     let diagonalFactor = smoothstep(-0.1, 0.1, diagonalDist);
     
     // Multiply circular blur by diagonal factor
-    // Result: blur=0 on top-right, full radial blur on bottom-left
+    // Result: blur=0 on one side, full radial blur on the other
     return centerDist * maxBlurSize * diagonalFactor;
   }
   
   // Get normalized blur amount for visualization (0 to 1)
-  fn getBlurNormalized(uv: vec2f, maxBlurSize: f32) -> f32 {
-    let blurSize = calculateBlurSize(uv, maxBlurSize);
+  fn getBlurNormalized(uv: vec2f, maxBlurSize: f32, angleRadians: f32) -> f32 {
+    let blurSize = calculateBlurSize(uv, maxBlurSize, angleRadians);
     return blurSize / maxBlurSize;
   }
 `;
@@ -160,19 +162,23 @@ export default function Page() {
   const bumpIntensityRef = useRef(0);
   const bumpProgressRef = useRef(0);
   const debugSdfRef = useRef(false);
+  const debugBlurRef = useRef(false);
+  const blurAngleRef = useRef(26);
 
   // Leva controls
-  const { debugBlur, blurAngle } = useControls({
+  useControls({
     debugBlur: {
       value: false,
       label: "Debug Blur Size",
+      onChange: (v) => { debugBlurRef.current = v; },
     },
     blurAngle: {
-      value: -45,
+      value: 26,
       min: -180,
       max: 180,
       step: 1,
       label: "Blur Angle (deg)",
+      onChange: (v) => { blurAngleRef.current = v; },
     },
   });
 
@@ -589,6 +595,7 @@ export default function Page() {
         struct BlurUniforms {
           maxBlurSize: f32,
           samples: f32,
+          angle: f32,
         }
         @group(1) @binding(0) var<uniform> u: BlurUniforms;
         @group(1) @binding(1) var inputTex: texture_2d<f32>;
@@ -617,8 +624,8 @@ export default function Page() {
           // Convert to UV coordinates
           let uv = pos.xy / globals.resolution;
           
-          // Use shared blur size calculation
-          let blurSize = calculateBlurSize(uv, u.maxBlurSize);
+          // Use shared blur size calculation with angle
+          let blurSize = calculateBlurSize(uv, u.maxBlurSize, u.angle);
           
           // Generate random rotation per pixel using hash
           let hash = pixelHash(vec2u(pos.xy));
@@ -645,6 +652,7 @@ export default function Page() {
         inputTex: { value: renderTarget }, // Pass full RenderTarget (includes texture + sampler)
         maxBlurSize: { value: BLUR_MAX_SIZE },
         samples: { value: BLUR_MAX_SAMPLES },
+        angle: { value: 0 }, // Will be updated in render loop
       };
 
       blurPass = ctx.pass(blurShaderCode, {
@@ -655,6 +663,7 @@ export default function Page() {
       const blurDebugShaderCode = /* wgsl */ `
         struct BlurDebugUniforms {
           maxBlurSize: f32,
+          angle: f32,
         }
         @group(1) @binding(0) var<uniform> u: BlurDebugUniforms;
 
@@ -665,10 +674,10 @@ export default function Page() {
           // Convert to UV coordinates
           let uv = pos.xy / globals.resolution;
           
-          // Use shared blur size calculation
-          let normalized = getBlurNormalized(uv, u.maxBlurSize);
+          // Use shared blur size calculation with angle
+          let normalized = getBlurNormalized(uv, u.maxBlurSize, u.angle);
           
-          // Color scheme: Blue (center, no blur) → Red (corners, max blur)
+          // Color scheme: Blue (no blur) → Red (max blur)
           var color = vec3f(normalized, 0.0, 1.0 - normalized);
           
           // Add grid lines to show blur size contours
@@ -689,6 +698,7 @@ export default function Page() {
 
       const blurDebugUniforms = {
         maxBlurSize: { value: BLUR_MAX_SIZE },
+        angle: { value: (blurAngleRef.current * Math.PI) / 180 }, // Convert degrees to radians
       };
 
       blurDebugPass = ctx.pass(blurDebugShaderCode, {
@@ -728,12 +738,17 @@ export default function Page() {
         renderUniforms.bumpIntensity.value = bumpIntensityRef.current;
         renderUniforms.bumpProgress.value = bumpProgressRef.current;
 
+        // Update blur angle (convert degrees to radians)
+        const angleRadians = (blurAngleRef.current * Math.PI) / 180;
+        blurUniforms.angle.value = angleRadians;
+        blurDebugUniforms.angle.value = angleRadians;
+
         if (debugSdfRef.current) {
           // SDF Debug mode: render the SDF visualization directly to canvas
           ctx.setTarget(null);
           ctx.clear(null, [0, 0, 0, 1]);
           debugPass.draw();
-        } else if (debugBlur) {
+        } else if (debugBlurRef.current) {
           // Blur Debug mode: visualize blur size calculation
           ctx.setTarget(null);
           ctx.clear(null, [0, 0, 0, 1]);
@@ -763,7 +778,7 @@ export default function Page() {
       cancelAnimationFrame(animationId);
       ctx?.dispose();
     };
-  }, [debugBlur]);
+  }, []);
 
   return (
     <div 
