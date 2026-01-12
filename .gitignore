@@ -4,6 +4,7 @@ node_modules
 .pnp.js
 .playwright-mcp
 .references
+.plans
 
 # Testing
 coverage
