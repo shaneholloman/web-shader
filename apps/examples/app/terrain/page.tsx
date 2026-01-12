@@ -26,6 +26,7 @@ export default function TerrainPage() {
         // Use autoResize - defaults to DPR capped at 2
         ctx = await gpu.init(canvasRef.current, {
           autoResize: true,
+          dpr: 1,
           debug: false,
         });
 
@@ -35,206 +36,196 @@ export default function TerrainPage() {
         }
 
         const terrain = ctx.pass(/* wgsl */ `
-          // Constants - optimized
-          const MAX_STEPS: i32 = 128;
-          const MAX_DIST: f32 = 150.0;
-          const SURF_DIST: f32 = 0.015;
-          const PI: f32 = 3.14159265359;
-          const WATER_LEVEL: f32 = 0.3;
+          // Lunar Landscape - Original implementation by Ralph-GPU AI
+          const MAX_STEPS: i32 = 160; 
+          const MAX_DIST: f32 = 400.0;
+          const SURF_DIST: f32 = 0.01; 
+          const SUN_DIR: vec3f = vec3f(-0.4, 0.6, -0.5); // Higher sun angle for more light
 
-          // Fast hash
-          fn hash(p: vec2f) -> f32 {
+          fn hash21(p: vec2f) -> f32 {
             var p3 = fract(vec3f(p.x, p.y, p.x) * 0.13);
             p3 += dot(p3, p3.yzx + 3.333);
             return fract((p3.x + p3.y) * p3.z);
           }
 
-          // Value noise
-          fn noise(p: vec2f) -> f32 {
+          fn hash33(p: vec3f) -> vec3f {
+            var p3 = fract(p * vec3f(0.1031, 0.1030, 0.0973));
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.xxy + p3.yzz) * p3.zyx);
+          }
+
+          // Value noise with analytical derivatives
+          fn moonNoise(p: vec2f) -> vec3f {
             let i = floor(p);
             let f = fract(p);
-            let u = f * f * (3.0 - 2.0 * f);
-            return mix(
-              mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x),
-              mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x),
-              u.y
-            );
+            let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+            let du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+            
+            let a = hash21(i + vec2f(0.0, 0.0));
+            let b = hash21(i + vec2f(1.0, 0.0));
+            let c = hash21(i + vec2f(0.0, 1.0));
+            let d = hash21(i + vec2f(1.0, 1.0));
+
+            let k0 = a;
+            let k1 = b - a;
+            let k2 = c - a;
+            let k3 = a - b - c + d;
+
+            let val = k0 + k1 * u.x + k2 * u.y + k3 * u.x * u.y;
+            let deriv = du * vec2f(k1 + k3 * u.y, k2 + k3 * u.x);
+
+            return vec3f(val, deriv);
           }
 
-          // FBM - 4 octaves for speed
-          fn fbm(p: vec2f) -> f32 {
-            var v = 0.0;
-            var a = 0.5;
-            var pos = p;
-            for (var i = 0; i < 4; i++) {
-              v += a * noise(pos);
-              a *= 0.5;
-              pos = vec2f(pos.x * 0.8 - pos.y * 0.6, pos.x * 0.6 + pos.y * 0.8) * 2.0;
+          // Optimized procedural crater function (single loop layer)
+          fn crater(p: vec2f) -> f32 {
+            let i = floor(p);
+            let f = fract(p);
+            var dist = 1.0;
+            
+            for (var y = -1.0; y <= 1.0; y += 1.0) {
+              for (var x = -1.0; x <= 1.0; x += 1.0) {
+                let g = vec2f(x, y);
+                let o = hash33(vec3f(i + g, 0.0)).xy * 0.7;
+                let r = length(g + o - f);
+                dist = min(dist, r);
+              }
             }
-            return v;
+            // Safer crater shape to avoid raymarching holes
+            return -exp(-dist * dist * 4.0) * 2.0;
           }
 
-          // Terrain height - simplified
-          fn terrainHeight(p: vec2f) -> f32 {
-            let scale = 0.025;
-            var h = fbm(p * scale) * 0.8;
-            h += pow(abs(noise(p * scale * 1.5) - 0.5) * 2.0, 1.5) * 0.3;
-            return h * 12.0 - 2.0;
+          // Lunar surface displacement - balanced for performance
+          fn moonSurface(p: vec2f) -> vec3f {
+            var h: f32 = 0.0;
+            var d = vec2f(0.0);
+            var a: f32 = 0.5;
+            var pos = p * 0.05;
+            let m = mat2x2f(0.8, 0.6, -0.6, 0.8);
+            
+            for (var i = 0; i < 5; i++) { 
+              let n = moonNoise(pos);
+              d += a * n.yz;
+              h += a * n.x / (1.0 + dot(d, d)); 
+              a *= 0.5;
+              pos = m * pos * 2.2;
+            }
+            
+            // Single pass of craters
+            h += crater(p * 0.03) * 1.2;
+            
+            return vec3f(pow(h, 1.) * 3.0 - 5.0, d * 15.0 * 0.05);
           }
 
-          fn mapTerrain(p: vec3f) -> f32 {
-            return p.y - terrainHeight(p.xz);
+          fn skyBackdrop(rd: vec3f) -> vec3f {
+            var col = vec3f(0.0);
+            
+            // Distant sharp stars
+            let res = globals.resolution.x * 0.5;
+            var p = rd;
+            for (var i: f32 = 0.0; i < 3.0; i += 1.0) {
+              let q = fract(p * (0.2 * res)) - 0.5;
+              let id = floor(p * (0.2 * res));
+              let rn = hash33(id).xy;
+              var c2 = 1.0 - smoothstep(0.0, 0.5, length(q));
+              c2 *= step(rn.x, 0.0004 + i * 0.0005);
+              col += c2 * (mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), rn.y));
+              p *= 1.5;
+            }
+            
+            // Earth-glow
+            let earthDir = normalize(vec3f(0.5, 0.3, 0.8));
+            let earthDot = max(0.0, dot(rd, earthDir));
+            col += pow(earthDot, 100.0) * vec3f(0.2, 0.5, 1.0) * 3.0;
+            col += pow(earthDot, 10.0) * vec3f(0.1, 0.2, 0.5) * 0.8;
+            
+            return col;
           }
 
-          fn mapWater(p: vec3f, time: f32) -> f32 {
-            let w = time * 0.5;
-            return p.y - WATER_LEVEL - sin(p.x * 0.5 + w) * cos(p.z * 0.3 + w * 0.7) * 0.03;
+          struct MoonHit {
+            dist: f32,
+            derivs: vec2f,
           }
 
-          struct SceneResult { dist: f32, material: i32 }
-
-          fn map(p: vec3f, time: f32) -> SceneResult {
-            let t = mapTerrain(p);
-            let w = mapWater(p, time);
-            var r: SceneResult;
-            r.dist = min(t, w);
-            r.material = select(1, 0, t < w);
+          fn mapMoon(p: vec3f) -> MoonHit {
+            let ms = moonSurface(p.xz);
+            var r: MoonHit;
+            r.dist = p.y - ms.x;
+            r.derivs = ms.yz;
             return r;
           }
 
-          fn terrainNormal(p: vec3f) -> vec3f {
-            let e = vec2f(0.1, 0.0);
-            return normalize(vec3f(
-              terrainHeight(p.xz - e.xy) - terrainHeight(p.xz + e.xy),
-              0.2,
-              terrainHeight(p.xz - e.yx) - terrainHeight(p.xz + e.yx)
-            ));
-          }
-
-          fn raymarch(ro: vec3f, rd: vec3f, time: f32) -> SceneResult {
-            var t = 0.1;
-            var r: SceneResult;
-            r.dist = MAX_DIST;
-            r.material = -1;
+          fn raymarchMoon(ro: vec3f, rd: vec3f) -> MoonHit {
+            var t: f32 = 0.0;
+            var res: MoonHit;
+            res.dist = MAX_DIST;
+            
+            var precis = 0.001;
             for (var i = 0; i < MAX_STEPS; i++) {
               let p = ro + rd * t;
-              let res = map(p, time);
-              if (res.dist < SURF_DIST * t) {
-                r.dist = t;
-                r.material = res.material;
+              let m = mapMoon(p);
+              if (abs(m.dist) < precis || t > MAX_DIST) {
+                res = m;
+                res.dist = t;
                 break;
               }
-              if (t > MAX_DIST) { break; }
-              t += res.dist * 0.95;
+              // More conservative stepping to avoid holes
+              t += m.dist * 0.8; 
             }
-            return r;
-          }
-
-          fn sky(rd: vec3f, sunDir: vec3f) -> vec3f {
-            var c = mix(vec3f(0.5, 0.65, 0.85), vec3f(0.15, 0.35, 0.75), pow(max(rd.y, 0.0), 0.4));
-            c = mix(c, vec3f(0.85, 0.75, 0.65), pow(1.0 - abs(rd.y), 6.0) * 0.4);
-            let s = max(dot(rd, sunDir), 0.0);
-            c += pow(s, 256.0) * vec3f(1.0, 0.95, 0.8) * 8.0;
-            c += pow(s, 8.0) * vec3f(1.0, 0.7, 0.4) * 0.4;
-            return c;
-          }
-
-          fn applyFog(col: vec3f, dist: f32, rd: vec3f, sunDir: vec3f) -> vec3f {
-            let fog = 1.0 - exp(-max(0.0, dist - 60.0) * 0.012);
-            return mix(col, sky(rd, sunDir) * 0.85, fog);
-          }
-
-          // Simplified materials - single noise lookup each
-          fn grassColor(p: vec3f, slope: f32) -> vec3f {
-            let n = noise(p.xz * 0.4);
-            let grass = mix(vec3f(0.18, 0.38, 0.1), vec3f(0.28, 0.48, 0.15), n);
-            let dirt = vec3f(0.25, 0.2, 0.12);
-            return mix(grass, dirt, smoothstep(0.25, 0.55, slope));
-          }
-
-          fn rockColor(p: vec3f, n: vec3f) -> vec3f {
-            let d = noise(p.xz * 0.6 + p.y * 0.3);
-            var rock = mix(vec3f(0.35, 0.32, 0.28), vec3f(0.45, 0.42, 0.38), d);
-            rock = mix(rock, vec3f(0.38, 0.4, 0.32), max(0.0, n.y) * 0.25);
-            return rock;
-          }
-
-          fn snowColor(p: vec3f, slope: f32) -> vec3f {
-            let d = noise(p.xz * 1.5);
-            let snow = mix(vec3f(0.88, 0.92, 0.98), vec3f(0.95, 0.97, 1.0), d);
-            return mix(snow, vec3f(0.82, 0.88, 0.95), smoothstep(0.3, 0.6, slope) * 0.4);
+            return res;
           }
 
           @fragment
           fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+            let q = fc.xy / globals.resolution;
             var uv = (fc.xy - 0.5 * globals.resolution) / globals.resolution.y;
             uv.y = -uv.y;
+            
             let time = globals.time;
             
-            let fly = time * 6.0;
-            let camH = 4.0 + sin(time * 0.25) * 1.5;
-            let ro = vec3f(fly, camH + terrainHeight(vec2f(fly, 0.0)) + 4.0, 0.0);
-            
-            let lookAt = vec3f(fly + 25.0, camH - 1.0, sin(time * 0.15) * 8.0);
+            let ro = vec3f(time * 8.0, 10.0 + sin(time * 0.1) * 2.0, 0.0);
+            let lookAt = vec3f(time * 8.0 + 20.0, 5.0, sin(time * 0.05) * 5.0);
             let fwd = normalize(lookAt - ro);
             let rgt = normalize(cross(vec3f(0.0, 1.0, 0.0), fwd));
             let up = cross(fwd, rgt);
-            let rd = normalize(fwd + uv.x * rgt + uv.y * up);
+            let rd = normalize(uv.x * rgt + uv.y * up + fwd * 1.2);
             
-            let sunDir = normalize(vec3f(cos(time * 0.03), 0.5, sin(time * 0.03)));
-            let hit = raymarch(ro, rd, time);
+            let bg = skyBackdrop(rd);
+            var col = bg;
             
-            var col = vec3f(0.0);
+            let hit = raymarchMoon(ro, rd);
             
             if (hit.dist < MAX_DIST) {
               let p = ro + rd * hit.dist;
+              let n = normalize(vec3f(-hit.derivs.x, 1.0, -hit.derivs.y));
               
-              if (hit.material == 0) {
-                let n = terrainNormal(p);
-                let slope = 1.0 - n.y;
-                let h = p.y;
-                
-                // Material zones
-                let grass = grassColor(p, slope);
-                let rock = rockColor(p, n);
-                let snow = snowColor(p, slope);
-                let sand = vec3f(0.55, 0.5, 0.38);
-                
-                // Blend by height and slope
-                var mat = sand;
-                mat = mix(mat, grass, smoothstep(0.4, 1.2, h) * (1.0 - smoothstep(3.0, 4.5, h)));
-                mat = mix(mat, rock, smoothstep(0.4, 0.7, slope));
-                mat = mix(mat, rock * 0.95, smoothstep(3.5, 5.0, h) * (1.0 - slope));
-                mat = mix(mat, snow, smoothstep(4.5, 6.0, h) * (1.0 - slope * 1.3));
-                
-                // Lighting
-                let diff = max(dot(n, sunDir), 0.0);
-                let amb = vec3f(0.2, 0.25, 0.35) * (0.6 + 0.4 * n.y);
-                col = amb * mat + mat * diff * vec3f(1.0, 0.95, 0.85);
-                
-              } else {
-                // Water
-                let viewDir = normalize(ro - p);
-                let n = vec3f(0.0, 1.0, 0.0);
-                let refl = sky(reflect(-viewDir, n), sunDir);
-                let fres = pow(1.0 - max(dot(viewDir, n), 0.0), 4.0);
-                col = mix(vec3f(0.08, 0.2, 0.35), refl, fres * 0.7);
-                col += pow(max(dot(reflect(-viewDir, n), sunDir), 0.0), 256.0) * 1.2;
-              }
+              let sunLgt = normalize(-SUN_DIR);
+              let dif = max(0.0, dot(n, sunLgt));
               
-              col = applyFog(col, hit.dist, rd, sunDir);
-            } else {
-              col = sky(rd, sunDir);
+              // Brighter regolith with more variation
+              let noiseVar = hash21(p.xz * 0.2);
+              let regolith = mix(vec3f(0.55, 0.55, 0.58), vec3f(0.7, 0.7, 0.75), noiseVar);
+              
+              // Stronger fill light (Earth glow contribution)
+              let earthDir = normalize(vec3f(0.5, 0.3, 0.8));
+              let earthFill = max(0.0, dot(n, earthDir)) * vec3f(0.1, 0.2, 0.4) * 0.5;
+              
+              let bounce = max(0.0, 0.5 + 0.5 * n.y) * 0.05;
+              
+              col = regolith * (dif + bounce) + earthFill;
+              
+              col = mix(col, bg, smoothstep(MAX_DIST * 0.7, MAX_DIST, hit.dist));
             }
             
-            // Tone mapping + gamma
-            col = col / (col + 1.0);
-            col = pow(col, vec3f(0.45));
-            col *= 1.0 - 0.12 * length(uv);
+            col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14); // ACES
+            col = pow(col, vec3f(0.4545)); // Gamma
+            col *= 1.0 - 0.15 * length(uv);
             
             return vec4f(col, 1.0);
           }
         `);
+
+        let lastFps = 0
 
         function frame() {
           if (disposed) return;
@@ -244,7 +235,11 @@ export default function TerrainPage() {
           frameCount++;
           const now = performance.now();
           if (now - lastTime >= 1000) {
-            setFps(Math.round(frameCount * 1000 / (now - lastTime)));
+            const newFps = Math.round(frameCount * 1000 / (now - lastTime))
+            if(newFps !== lastFps) {
+              lastFps = newFps
+              setFps(newFps);
+            }
             frameCount = 0;
             lastTime = now;
           }
