@@ -637,7 +637,9 @@ export default function Page() {
           
           for (var i = 0; i < sampleCount; i++) {
             let offset = vogelDisk(f32(i), u.samples, rotation);
-            let sampleUV = uv + offset * blurSize;
+            // Scale offset.x by aspect ratio to create circular disk instead of elliptical
+            let aspectCorrectedOffset = vec2f(offset.x / globals.aspect, offset.y);
+            let sampleUV = uv + aspectCorrectedOffset * blurSize;
             color += textureSample(inputTex, inputSampler, sampleUV);
           }
           
