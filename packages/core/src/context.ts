@@ -71,10 +71,12 @@ export class GPUContext {
 
     // Set canvas size based on display size or canvas attributes
     if (options.autoResize) {
-      // Use display size (CSS size) for autoResize
+      // Use display size (CSS size) for autoResize - apply DPR
       const rect = canvas.getBoundingClientRect();
       this._width = Math.floor(rect.width * this._dpr);
       this._height = Math.floor(rect.height * this._dpr);
+      canvas.width = this._width;
+      canvas.height = this._height;
       
       // Setup ResizeObserver to track canvas size changes
       this.resizeObserver = new ResizeObserver((entries) => {
@@ -88,13 +90,12 @@ export class GPUContext {
       });
       this.resizeObserver.observe(canvas);
     } else {
-      // Use canvas attribute size
-      this._width = Math.floor(canvas.width * this._dpr);
-      this._height = Math.floor(canvas.height * this._dpr);
+      // When NOT using autoResize, use canvas.width/height directly as pixel dimensions
+      // User has already set the pixel size they want - don't multiply by DPR
+      // This avoids double-multiplication issues with React StrictMode remounts
+      this._width = canvas.width;
+      this._height = canvas.height;
     }
-    
-    canvas.width = this._width;
-    canvas.height = this._height;
 
     // Configure context
     context.configure({
