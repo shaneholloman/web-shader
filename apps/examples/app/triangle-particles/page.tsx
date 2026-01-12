@@ -40,7 +40,7 @@ const BLUR_MAX_SAMPLES = 32;
 const BLUR_MAX_SIZE = 0.02; // Maximum blur radius in NDC
 
 // ============================================================================
-// Shared WGSL Code - SDF Functions
+// Shared WGSL Code - SDF and Blur Functions
 // ============================================================================
 
 // Extracted SDF functions for use in compute shader and debug pass
@@ -97,6 +97,36 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
   }
 `;
 
+// Extracted blur size calculation for consistency between blur and debug shaders
+const BLUR_CALCULATION_WGSL = /* wgsl */ `
+  // Calculate blur size with diagonal split through center
+  // Top-right side: no blur, Bottom-left side: radial blur
+  fn calculateBlurSize(uv: vec2f, maxBlurSize: f32) -> f32 {
+    // Calculate distance from center (circular component)
+    let centerDist = length(uv - 0.5) * sqrt(2.0);
+    
+    // Diagonal split through center (45 degree line)
+    // In UV space: diagonal from top-right (1,0) to bottom-left (0,1) passes through (0.5, 0.5)
+    // Points satisfying x + y = 1 are on the diagonal
+    // Signed distance: positive = bottom-left side, negative = top-right side
+    let diagonalDist = (uv.x + uv.y - 1.0) / sqrt(2.0);
+    
+    // Convert to 0-1 factor with smooth transition
+    // smoothstep gives smooth transition across the diagonal line
+    let diagonalFactor = smoothstep(-0.1, 0.1, diagonalDist);
+    
+    // Multiply circular blur by diagonal factor
+    // Result: blur=0 on top-right, full radial blur on bottom-left
+    return centerDist * maxBlurSize * diagonalFactor;
+  }
+  
+  // Get normalized blur amount for visualization (0 to 1)
+  fn getBlurNormalized(uv: vec2f, maxBlurSize: f32) -> f32 {
+    let blurSize = calculateBlurSize(uv, maxBlurSize);
+    return blurSize / maxBlurSize;
+  }
+`;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -132,10 +162,17 @@ export default function Page() {
   const debugSdfRef = useRef(false);
 
   // Leva controls
-  const { debugBlur } = useControls({
+  const { debugBlur, blurAngle } = useControls({
     debugBlur: {
       value: false,
       label: "Debug Blur Size",
+    },
+    blurAngle: {
+      value: -45,
+      min: -180,
+      max: 180,
+      step: 1,
+      label: "Blur Angle (deg)",
     },
   });
 
@@ -557,6 +594,8 @@ export default function Page() {
         @group(1) @binding(1) var inputTex: texture_2d<f32>;
         @group(1) @binding(2) var inputSampler: sampler;
 
+        ${BLUR_CALCULATION_WGSL}
+
         // Pixel hash for random rotation
         fn pixelHash(p: vec2u) -> f32 {
           var n = p.x * 3u + p.y * 113u;
@@ -578,11 +617,8 @@ export default function Page() {
           // Convert to UV coordinates
           let uv = pos.xy / globals.resolution;
           
-          // Calculate distance from center (0,0 at center, 1 at corners)
-          let centerDist = length(uv - 0.5) * sqrt(2.0);
-          
-          // Map distance to blur size (0 at center, maxBlurSize at corners)
-          let blurSize = centerDist * u.maxBlurSize;
+          // Use shared blur size calculation
+          let blurSize = calculateBlurSize(uv, u.maxBlurSize);
           
           // Generate random rotation per pixel using hash
           let hash = pixelHash(vec2u(pos.xy));
@@ -622,20 +658,15 @@ export default function Page() {
         }
         @group(1) @binding(0) var<uniform> u: BlurDebugUniforms;
 
+        ${BLUR_CALCULATION_WGSL}
+
         @fragment
         fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
           // Convert to UV coordinates
           let uv = pos.xy / globals.resolution;
           
-          // Calculate distance from center (same as blur shader)
-          let centerDist = length(uv - 0.5) * sqrt(2.0);
-          
-          // Map distance to blur size (same as blur shader)
-          let blurSize = centerDist * u.maxBlurSize;
-          
-          // Visualize blur size as gradient
-          // Scale it for visibility (maxBlurSize is typically small like 0.02)
-          let normalized = blurSize / u.maxBlurSize; // 0 to 1 from center to corners
+          // Use shared blur size calculation
+          let normalized = getBlurNormalized(uv, u.maxBlurSize);
           
           // Color scheme: Blue (center, no blur) → Red (corners, max blur)
           var color = vec3f(normalized, 0.0, 1.0 - normalized);
@@ -646,13 +677,10 @@ export default function Page() {
           let gridLine = smoothstep(0.05, 0.1, grid) * smoothstep(0.95, 0.9, grid);
           color = mix(vec3f(1.0), color, gridLine);
           
-          // Show actual blur size as text overlay (using distance visualization)
           // Add a scale bar at the bottom
           if (uv.y > 0.9) {
             let barPos = uv.x;
-            let barBlur = barPos * u.maxBlurSize;
-            let barNorm = barPos;
-            color = vec3f(barNorm, 0.0, 1.0 - barNorm);
+            color = vec3f(barPos, 0.0, 1.0 - barPos);
           }
           
           return vec4f(color, 1.0);
