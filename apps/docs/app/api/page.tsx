@@ -9,13 +9,20 @@ gpu.isSupported()  // → boolean
 gpu.init(canvas, options?)  // → Promise<GPUContext>`;
 
 const initOptionsCode = `interface InitOptions {
-  dpr?: number;      // Device pixel ratio (default: window.devicePixelRatio)
-  debug?: boolean;   // Enable debug logging (default: false)
+  autoResize?: boolean;  // Auto-resize canvas with ResizeObserver (default: false)
+  dpr?: number;          // Device pixel ratio (default: min(devicePixelRatio, 2))
+  debug?: boolean;       // Enable debug logging (default: false)
 }
 
+// Recommended: autoResize handles canvas sizing automatically
+const ctx = await gpu.init(canvas, {
+  autoResize: true,
+  debug: true,
+});
+
+// Or manual control:
 const ctx = await gpu.init(canvas, {
   dpr: Math.min(window.devicePixelRatio, 2),
-  debug: true,
 });`;
 
 const contextCreationCode = `// Create a fullscreen pass
@@ -37,7 +44,10 @@ ctx.pingPong(width, height, options?)    // → PingPongTarget
 ctx.mrt(outputs, width, height)          // → MultiRenderTarget
 
 // Create storage buffer
-ctx.storage(byteSize)                    // → StorageBuffer`;
+ctx.storage(byteSize)                    // → StorageBuffer
+
+// Create particle system (instanced quads)
+ctx.particles(count, options)            // → Particles`;
 
 const contextStateCode = `// Render target management
 ctx.setTarget(target)      // Set render target (pass null for screen)
@@ -56,6 +66,7 @@ ctx.resize(width, height)   // Resize context and internal buffers`;
 
 const contextPropertiesCode = `ctx.width: number         // Canvas width in pixels
 ctx.height: number        // Canvas height in pixels
+ctx.dpr: number           // Device pixel ratio (get/set)
 ctx.time: number          // Elapsed time in seconds
 ctx.timeScale: number     // Time multiplier (default: 1)
 ctx.paused: boolean       // Pause time updates
@@ -187,6 +198,58 @@ buffer.gpuBuffer
 // Cleanup
 buffer.dispose()`;
 
+const particlesCode = `// Create particle system - instanced quads with full shader control
+const particles = ctx.particles(1000, {
+  shader: \`
+    struct Particle { pos: vec2f, size: f32, hue: f32 }
+    @group(1) @binding(0) var<storage, read> particles: array<Particle>;
+
+    struct VertexOutput {
+      @builtin(position) position: vec4f,
+      @location(0) uv: vec2f,
+      @location(1) hue: f32,
+    }
+
+    @vertex
+    fn vs_main(
+      @builtin(instance_index) iid: u32,
+      @builtin(vertex_index) vid: u32
+    ) -> VertexOutput {
+      let p = particles[iid];
+      // Built-in helpers: quadOffset(), quadUV()
+      let quadPos = quadOffset(vid) * p.size;
+      
+      var out: VertexOutput;
+      out.position = vec4f(p.pos + quadPos, 0.0, 1.0);
+      out.uv = quadUV(vid);
+      out.hue = p.hue;
+      return out;
+    }
+
+    @fragment
+    fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+      // Circle SDF
+      let d = length(in.uv - 0.5);
+      if (d > 0.5) { discard; }
+      return vec4f(1.0, in.hue, 0.5, 1.0);
+    }
+  \`,
+  bufferSize: 1000 * 16,  // 16 bytes per particle
+  blend: "alpha",
+});
+
+// Write particle data
+const data = new Float32Array(1000 * 4);
+// Fill data: [x, y, size, hue] per particle
+particles.write(data);
+
+// Draw all particles
+particles.draw();
+
+// Access underlying resources
+particles.storageBuffer     // → StorageBuffer
+particles.underlyingMaterial // → Material`;
+
 const blendModesCode = `// Preset blend modes
 ctx.pass(shader, { blend: "alpha" })      // Standard transparency
 ctx.pass(shader, { blend: "additive" })   // Add colors (glow, fire)
@@ -297,6 +360,7 @@ export default function ApiPage() {
           <li><a href="#target" className="text-primary-400 hover:text-primary-300">RenderTarget</a></li>
           <li><a href="#pingpong" className="text-primary-400 hover:text-primary-300">PingPongTarget</a></li>
           <li><a href="#storage" className="text-primary-400 hover:text-primary-300">StorageBuffer</a></li>
+          <li><a href="#particles" className="text-primary-400 hover:text-primary-300">Particles</a></li>
           <li><a href="#blend" className="text-primary-400 hover:text-primary-300">Blend Modes</a></li>
           <li><a href="#globals" className="text-primary-400 hover:text-primary-300">Auto-Injected Globals</a></li>
           <li><a href="#uniforms" className="text-primary-400 hover:text-primary-300">Uniform Types</a></li>
@@ -476,6 +540,41 @@ export default function ApiPage() {
           <p className="text-gray-400 text-sm">
             <strong className="text-gray-100">Size calculation:</strong> Multiply the number of items by bytes per item. A <code>vec4f</code> is 16 bytes (4 floats × 4 bytes). For 1000 particles with position and velocity (2 × vec2f), that&apos;s <code>1000 × 16 = 16000</code> bytes.
           </p>
+        </div>
+      </section>
+
+      {/* Particles */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-bold text-gray-100 mb-4 flex items-center gap-3" id="particles">
+          <span className="px-2 py-1 bg-primary-500/20 rounded text-primary-400 font-mono text-sm">class</span>
+          Particles
+        </h2>
+        <p className="text-gray-300 mb-4">
+          A helper for instanced quad rendering with full shader control. User provides vertex and fragment shaders — 
+          no built-in colors, shapes, or assumptions about data layout.
+        </p>
+        <CodeBlock code={particlesCode} language="typescript" />
+
+        <div className="mt-4 space-y-4">
+          <div className="p-4 rounded-lg bg-gray-900 border border-gray-800">
+            <h4 className="font-semibold text-gray-100 mb-2">Built-in WGSL Helpers</h4>
+            <ul className="text-gray-400 text-sm space-y-1">
+              <li>• <code>quadOffset(vid: u32) → vec2f</code> — Quad corner position (-0.5 to 0.5)</li>
+              <li>• <code>quadUV(vid: u32) → vec2f</code> — UV coordinates (0 to 1)</li>
+            </ul>
+          </div>
+          <div className="p-4 rounded-lg bg-gray-900 border border-gray-800">
+            <h4 className="font-semibold text-gray-100 mb-2">What You Control</h4>
+            <ul className="text-gray-400 text-sm space-y-1">
+              <li>• <strong>Particle struct layout</strong> — Any data you need (position, size, color, age, etc.)</li>
+              <li>• <strong>Vertex shader</strong> — Position, size, rotation, billboarding, etc.</li>
+              <li>• <strong>Fragment shader</strong> — Shape via SDF, color, effects (squares, circles, triangles)</li>
+            </ul>
+          </div>
+          <div className="p-4 rounded-lg bg-primary-500/10 border border-primary-500/20 text-primary-200">
+            <strong>Why not point-list?</strong> WebGPU&apos;s <code>point-list</code> topology renders points as exactly 1 pixel with no size control. 
+            The Particles helper uses instanced quads (2 triangles per particle) to support variable sizes.
+          </div>
         </div>
       </section>
 
