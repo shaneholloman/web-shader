@@ -91,7 +91,7 @@ export default function ShaderComponent() {
       }
 
       ctx = await gpu.init(canvasRef.current, {
-        dpr: Math.min(window.devicePixelRatio, 2),
+        autoResize: true, // Automatically handles canvas sizing and DPR
         debug: true,
       });
 
@@ -286,7 +286,7 @@ function frame() {
 
 ### 6. Storage Buffers & Materials (Particles)
 
-**IMPORTANT:** ralph-gpu does NOT support WebGPU's `point-list` topology for particles. Instead, use **instanced rendering** where each particle is a quad (2 triangles).
+**NOTE:** While ralph-gpu supports `point-list` topology, WebGPU renders points as **1 pixel only** (no size control). For variable-sized particles, use **instanced rendering** where each particle is a quad (2 triangles).
 
 #### WGSL Alignment Requirements
 
@@ -680,7 +680,109 @@ function frame() {
 frame();
 ```
 
-### 9. Line Rendering
+### 9. Particles Helper
+
+The `ctx.particles()` helper provides a minimal API for instanced quad rendering with full shader control:
+
+```tsx
+const particleCount = 1000;
+
+const particles = ctx.particles(particleCount, {
+  shader: /* wgsl */ `
+    // User defines their own particle struct
+    struct Particle {
+      pos: vec2f,
+      size: f32,
+      hue: f32,
+    }
+
+    // Storage buffer is auto-bound at group(1) binding(0)
+    @group(1) @binding(0) var<storage, read> particles: array<Particle>;
+
+    struct VertexOutput {
+      @builtin(position) position: vec4f,
+      @location(0) uv: vec2f,
+      @location(1) hue: f32,
+    }
+
+    @vertex
+    fn vs_main(
+      @builtin(instance_index) iid: u32,
+      @builtin(vertex_index) vid: u32
+    ) -> VertexOutput {
+      let p = particles[iid];
+      
+      // Built-in helpers:
+      // quadOffset(vid) returns -0.5 to 0.5 (quad corner position)
+      // quadUV(vid) returns 0 to 1 (UV coordinates)
+      let quadPos = quadOffset(vid) * p.size;
+      
+      var out: VertexOutput;
+      out.position = vec4f(p.pos + quadPos, 0.0, 1.0);
+      out.uv = quadUV(vid);
+      out.hue = p.hue;
+      return out;
+    }
+
+    @fragment
+    fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+      // User controls shape - square by default, circle via SDF
+      let d = length(in.uv - 0.5);
+      if (d > 0.5) { discard; }
+      return vec4f(1.0, in.hue, 0.5, 1.0);
+    }
+  `,
+  bufferSize: particleCount * 16, // 16 bytes per particle
+  blend: "alpha",
+});
+
+// Write particle data
+const data = new Float32Array(particleCount * 4);
+for (let i = 0; i < particleCount; i++) {
+  data[i * 4 + 0] = (Math.random() - 0.5) * 2; // x
+  data[i * 4 + 1] = (Math.random() - 0.5) * 2; // y
+  data[i * 4 + 2] = 0.02 + Math.random() * 0.03; // size
+  data[i * 4 + 3] = Math.random(); // hue
+}
+particles.write(data);
+
+// Draw
+particles.draw();
+```
+
+#### What the Helper Provides
+
+1. **Quad vertex generation** - 6 vertices (2 triangles) per instance
+2. **Built-in WGSL helpers** injected into shader:
+   - `fn quadOffset(vid: u32) -> vec2f` - Returns quad corner position (-0.5 to 0.5)
+   - `fn quadUV(vid: u32) -> vec2f` - Returns UV coordinates (0 to 1)
+3. **Storage buffer** - Automatically bound at `@group(1) @binding(0)`
+4. **Instancing** - `instanceCount = count`, `vertexCount = 6`
+
+#### What User Controls
+
+- **Particle struct layout** - Any data layout you need
+- **Vertex shader** - Position, size, rotation, billboarding, etc.
+- **Fragment shader** - Shape via SDF, color, effects, etc.
+
+#### Particles API
+
+```tsx
+// Create
+const particles = ctx.particles(count, {
+  shader: string, // Full WGSL with vertex + fragment
+  bufferSize: number, // Buffer size in bytes
+  blend: BlendMode, // "alpha" | "additive" | etc. (default: "alpha")
+});
+
+// Methods
+particles.write(data); // Write Float32Array/Uint32Array to buffer
+particles.draw(); // Draw all particles
+particles.storageBuffer; // Access underlying StorageBuffer
+particles.underlyingMaterial; // Access underlying Material
+```
+
+### 10. Line Rendering
 
 Use the `topology` option in materials for line rendering:
 
@@ -700,13 +802,13 @@ const strip = ctx.material(shader, {
 
 #### Available Topologies
 
-| Topology           | Description                                | Use Case           |
-| ------------------ | ------------------------------------------ | ------------------ |
-| `"triangle-list"`  | Default, separate triangles (3 verts each) | Standard geometry  |
-| `"triangle-strip"` | Connected triangles (shared verts)         | Efficient meshes   |
-| `"line-list"`      | Separate line segments (2 verts each)      | Disconnected lines |
-| `"line-strip"`     | Connected line (shared vertices)           | Paths, waveforms   |
-| `"point-list"`     | Individual points                          | Point clouds (1px) |
+| Topology           | Description                                | Use Case                   |
+| ------------------ | ------------------------------------------ | -------------------------- |
+| `"triangle-list"`  | Default, separate triangles (3 verts each) | Standard geometry          |
+| `"triangle-strip"` | Connected triangles (shared verts)         | Efficient meshes           |
+| `"line-list"`      | Separate line segments (2 verts each)      | Disconnected lines         |
+| `"line-strip"`     | Connected line (shared vertices)           | Paths, waveforms           |
+| `"point-list"`     | Individual points (**1px only, no size**)  | Sparse point clouds, debug |
 
 #### Line-List Example (Separate Segments)
 
@@ -906,16 +1008,21 @@ fn opSmoothUnion(d1: f32, d2: f32, k: f32) -> f32 {
 
 1. **Always check WebGPU support** before initializing
 2. **Handle async disposal** in React useEffect cleanup
-3. **Set explicit canvas dimensions** with DPR for sharp rendering:
+3. **Use `autoResize: true`** for automatic canvas sizing and resize handling:
+   ```tsx
+   ctx = await gpu.init(canvas, { autoResize: true });
+   ```
+   This uses ResizeObserver to automatically track canvas size changes and applies DPR.
+4. **Or manually handle resize** if you need more control:
    ```tsx
    const dpr = Math.min(window.devicePixelRatio, 2);
-   canvas.width = window.innerWidth * dpr;
-   canvas.height = window.innerHeight * dpr;
+   canvas.width = displayWidth * dpr;
+   canvas.height = displayHeight * dpr;
+   ctx.resize(displayWidth * dpr, displayHeight * dpr);
    ```
-4. **Handle window resize** by updating canvas dimensions and calling `ctx.resize()`
-5. **Use instanced quads for particles** - NOT point-list topology:
+5. **Use `ctx.particles()` for sized particles** - provides instanced quads with built-in helpers:
    ```tsx
-   ctx.material(shader, { vertexCount: 6, instances: particleCount });
+   ctx.particles(count, { shader: `...`, bufferSize: count * 16 });
    ```
 6. **Use `ctx.autoClear = false`** when doing ping-pong operations
 7. **Update uniform references** before each ping-pong iteration
@@ -936,7 +1043,7 @@ fn opSmoothUnion(d1: f32, d2: f32, k: f32) -> f32 {
 ```tsx
 // Module
 gpu.isSupported()                          // → boolean
-gpu.init(canvas, options?)                 // → Promise<GPUContext>
+gpu.init(canvas, { autoResize?, dpr?, debug? }) // → Promise<GPUContext>
 
 // Context
 ctx.pass(fragmentWGSL, options?)           // → Pass
@@ -945,10 +1052,12 @@ ctx.compute(wgsl, options?)                // → ComputeShader
 ctx.target(width, height, options?)        // → RenderTarget
 ctx.pingPong(width, height, options?)      // → PingPongTarget
 ctx.storage(byteSize)                      // → StorageBuffer
+ctx.particles(count, options)              // → Particles (instanced quads)
 
 ctx.setTarget(target | null)               // Set render target
 ctx.clear(target?, color?)                 // Clear target
-ctx.resize(width, height)                  // Resize context
+ctx.resize(width, height)                  // Resize context (pixels)
+ctx.dpr                                    // Get/set device pixel ratio
 ctx.dispose()                              // Cleanup all resources
 
 // Pass / Material
@@ -973,4 +1082,10 @@ pingPong.swap()                            // Swap read/write
 // Storage Buffer
 storage.write(data)                        // Write TypedArray
 storage.dispose()                          // Cleanup
+
+// Particles
+particles.write(data)                      // Write TypedArray to buffer
+particles.draw()                           // Draw all particles
+particles.storageBuffer                    // Get underlying StorageBuffer
+particles.underlyingMaterial               // Get underlying Material
 ```

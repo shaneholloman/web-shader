@@ -73,10 +73,12 @@ export interface RenderTargetOptions {
  * GPU context initialization options
  */
 export interface GPUContextOptions {
-  /** Device pixel ratio for high-DPI displays */
+  /** Device pixel ratio for high-DPI displays (default: 1) */
   dpr?: number;
   /** Enable debug mode with extra validation */
   debug?: boolean;
+  /** Automatically resize canvas to match display size using ResizeObserver (default: false) */
+  autoResize?: boolean;
 }
 
 /**
@@ -167,4 +169,18 @@ export interface GlobalUniforms {
   deltaTime: number;
   frame: number;
   aspect: number;
+}
+
+/**
+ * Particles helper options
+ * User provides full shader control - no built-in colors, shapes, or assumptions about data layout
+ */
+export interface ParticlesOptions {
+  /** Full WGSL shader with vertex and fragment functions. 
+   * Built-in helpers available: quadOffset(vid), quadUV(vid) */
+  shader: string;
+  /** Size of the particle storage buffer in bytes */
+  bufferSize: number;
+  /** Blend mode (default: "alpha") */
+  blend?: BlendMode | BlendConfig;
 }

@@ -15,6 +15,7 @@ export { RenderTarget } from "./target";
 export { PingPongTarget } from "./ping-pong";
 export { MultiRenderTarget } from "./mrt";
 export { StorageBuffer } from "./storage";
+export { Particles } from "./particles";
 
 // Errors
 export {
@@ -43,6 +44,7 @@ export type {
   GlobalUniforms,
   PrimitiveTopology,
   IndexFormat,
+  ParticlesOptions,
 } from "./types";
 
 /**
