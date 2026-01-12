@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useControls } from "leva";
 import {
   gpu,
   GPUContext,
@@ -130,6 +131,14 @@ export default function Page() {
   const bumpProgressRef = useRef(0);
   const debugSdfRef = useRef(false);
 
+  // Leva controls
+  const { debugBlur } = useControls({
+    debugBlur: {
+      value: false,
+      label: "Debug Blur Size",
+    },
+  });
+
   useEffect(() => {
     let ctx: GPUContext | null = null;
     let animationId: number;
@@ -148,6 +157,7 @@ export default function Page() {
     let particleMaterial: Material;
     let debugPass: Pass;
     let blurPass: Pass;
+    let blurDebugPass: Pass;
 
     // Render targets
     let renderTarget: ReturnType<GPUContext["target"]>;
@@ -605,6 +615,58 @@ export default function Page() {
         uniforms: blurUniforms,
       });
 
+      // Create blur debug pass to visualize blur size calculation
+      const blurDebugShaderCode = /* wgsl */ `
+        struct BlurDebugUniforms {
+          maxBlurSize: f32,
+        }
+        @group(1) @binding(0) var<uniform> u: BlurDebugUniforms;
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Convert to UV coordinates
+          let uv = pos.xy / globals.resolution;
+          
+          // Calculate distance from center (same as blur shader)
+          let centerDist = length(uv - 0.5) * sqrt(2.0);
+          
+          // Map distance to blur size (same as blur shader)
+          let blurSize = centerDist * u.maxBlurSize;
+          
+          // Visualize blur size as gradient
+          // Scale it for visibility (maxBlurSize is typically small like 0.02)
+          let normalized = blurSize / u.maxBlurSize; // 0 to 1 from center to corners
+          
+          // Color scheme: Blue (center, no blur) → Red (corners, max blur)
+          var color = vec3f(normalized, 0.0, 1.0 - normalized);
+          
+          // Add grid lines to show blur size contours
+          let gridFreq = 10.0;
+          let grid = fract(normalized * gridFreq);
+          let gridLine = smoothstep(0.05, 0.1, grid) * smoothstep(0.95, 0.9, grid);
+          color = mix(vec3f(1.0), color, gridLine);
+          
+          // Show actual blur size as text overlay (using distance visualization)
+          // Add a scale bar at the bottom
+          if (uv.y > 0.9) {
+            let barPos = uv.x;
+            let barBlur = barPos * u.maxBlurSize;
+            let barNorm = barPos;
+            color = vec3f(barNorm, 0.0, 1.0 - barNorm);
+          }
+          
+          return vec4f(color, 1.0);
+        }
+      `;
+
+      const blurDebugUniforms = {
+        maxBlurSize: { value: BLUR_MAX_SIZE },
+      };
+
+      blurDebugPass = ctx.pass(blurDebugShaderCode, {
+        uniforms: blurDebugUniforms,
+      });
+
       // Render loop
       let lastTime = performance.now();
       let totalTime = 0;
@@ -639,10 +701,15 @@ export default function Page() {
         renderUniforms.bumpProgress.value = bumpProgressRef.current;
 
         if (debugSdfRef.current) {
-          // Debug mode: render the SDF visualization directly to canvas
+          // SDF Debug mode: render the SDF visualization directly to canvas
           ctx.setTarget(null);
           ctx.clear(null, [0, 0, 0, 1]);
           debugPass.draw();
+        } else if (debugBlur) {
+          // Blur Debug mode: visualize blur size calculation
+          ctx.setTarget(null);
+          ctx.clear(null, [0, 0, 0, 1]);
+          blurDebugPass.draw();
         } else {
           // Normal mode: render particles to target, then apply blur
           // Step 1: Render particles to render target
@@ -668,7 +735,7 @@ export default function Page() {
       cancelAnimationFrame(animationId);
       ctx?.dispose();
     };
-  }, []);
+  }, [debugBlur]);
 
   return (
     <div 
