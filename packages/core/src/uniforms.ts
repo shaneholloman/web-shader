@@ -343,7 +343,9 @@ export function collectTextureBindings(uniforms: Uniforms): Map<string, TextureB
       if ("createView" in value && typeof value.createView === "function") {
         const texture = value as GPUTexture;
         // Look for matching sampler by convention: texName -> texNameSampler or texSampler
-        let sampler = samplers.get(key + "Sampler") || samplers.get(key.replace(/Tex$/, "Sampler"));
+        let sampler = samplers.get(key + "Sampler") 
+          || samplers.get(key.replace(/Tex(ture)?$/, "Sampler"))
+          || samplers.get(key.replace(/Texture$/, "") + "Sampler");
         textures.set(key, { texture, sampler });
       }
       // Check if it's a RenderTarget or similar object with texture/sampler

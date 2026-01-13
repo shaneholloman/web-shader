@@ -27,10 +27,11 @@ const POSITION_JITTER = 0.03; // Random offset from edge position
 const INITIAL_VELOCITY_JITTER = 0.4; // Initial velocity randomness
 
 // Physics
-const SDF_EPSILON = 0.0001; // SDF gradient sampling distance
+const SDF_EPSILON = 0.01; // SDF gradient sampling distance
 const FORCE_STRENGTH = 0.13; // How strongly SDF pushes particles
 const VELOCITY_DAMPING = 0.99; // Velocity decay per frame (0-1)
 const RESPAWN_VELOCITY_JITTER = INITIAL_VELOCITY_JITTER; // Velocity randomness on respawn
+const SDF_UPDATE_INTERVAL = 1.; // Update SDF texture once per second
 
 // Rendering
 const POINT_SIZE = 0.3;
@@ -90,7 +91,7 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
     let sdf = triangleSdf(p, r);
 
     // Noise-based force modulation
-    let noisePos = vec3f(p.x * 1., p.y * 1., time * 0.01);
+    let noisePos = vec3f(p.x * 1., p.y * 1., time * 0.21);
     let noiseSample = noise3d(noisePos) * 2.;
     let noiseScale = step(sdf, 0.) * (1. - u.focused);
 
@@ -163,11 +164,17 @@ export default function Page() {
   const bumpIntensityRef = useRef(0);
   const bumpProgressRef = useRef(0);
   const debugSdfRef = useRef(false);
+  const debugSdfTextureRef = useRef(false);
   const debugBlurRef = useRef(false);
   const blurAngleRef = useRef(26);
 
   // Leva controls
   useControls({
+    debugSdfTexture: {
+      value: false,
+      label: "Debug SDF Texture",
+      onChange: (v) => { debugSdfTextureRef.current = v; },
+    },
     debugBlur: {
       value: false,
       label: "Debug Blur Size",
@@ -200,17 +207,30 @@ export default function Page() {
     let computeBtoA: ComputeShader;
     let particleMaterial: Material;
     let debugPass: Pass;
+    let sdfTextureDebugPass: Pass;
     let blurPass: Pass;
     let blurDebugPass: Pass;
+    let sdfPass: Pass;
 
     // Render targets
     let renderTarget: ReturnType<GPUContext["target"]>;
+    let sdfTarget: ReturnType<GPUContext["target"]> | null = null;
 
-    // Custom sampler for blur pass
+    // Custom samplers
     let blurSampler: Sampler;
+    let sdfSampler: Sampler;
+
+    // SDF texture state
+    let needsSdfUpdate = true;
+    let currentCanvasWidth = 0;
+    let currentCanvasHeight = 0;
+    let lastSdfUpdateTime = 0;
 
     // Ping-pong state
     let pingPong = 0;
+
+    // ResizeObserver for tracking canvas size
+    let resizeObserver: ResizeObserver;
 
     async function init() {
       if (!canvasRef.current) return;
@@ -280,6 +300,40 @@ export default function Page() {
       velocityBufferB.write(velocityArrayB);
       lifetimeBuffer.write(lifetimeArray);
 
+      // Create SDF target at half resolution (must be before compute shaders)
+      const initialSdfWidth = Math.max(1, Math.floor(canvasRef.current.width / 2));
+      const initialSdfHeight = Math.max(1, Math.floor(canvasRef.current.height / 2));
+      
+      // Use 16-bit float format to properly store negative SDF values with good precision
+      sdfTarget = ctx.target(initialSdfWidth, initialSdfHeight, { format: "r16float" });
+      currentCanvasWidth = canvasRef.current.width;
+      currentCanvasHeight = canvasRef.current.height;
+      needsSdfUpdate = true;
+      
+      // Helper to resize SDF target when canvas size changes
+      function resizeSdfTarget(width: number, height: number) {
+        if (!sdfTarget) return;
+        
+        const sdfWidth = Math.max(1, Math.floor(width / 2));
+        const sdfHeight = Math.max(1, Math.floor(height / 2));
+        
+        // Use built-in resize method instead of creating new target
+        sdfTarget.resize(sdfWidth, sdfHeight);
+        
+        currentCanvasWidth = width;
+        currentCanvasHeight = height;
+        needsSdfUpdate = true;
+      }
+
+      // Create custom samplers
+      // SDF sampler with linear filtering for smooth gradient sampling
+      sdfSampler = ctx.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+
       // Create compute shaders
       const computeShaderCode = /* wgsl */ `
         struct ComputeUniforms {
@@ -294,16 +348,40 @@ export default function Page() {
           maxLifetime: f32,
         }
         @group(1) @binding(0) var<uniform> u: ComputeUniforms;
-        @group(1) @binding(1) var<storage, read_write> positions: array<vec2f>;
-        @group(1) @binding(2) var<storage, read> originalPositions: array<vec2f>;
-        @group(1) @binding(3) var<storage, read> velocityRead: array<vec2f>;
-        @group(1) @binding(4) var<storage, read_write> velocityWrite: array<vec2f>;
-        @group(1) @binding(5) var<storage, read_write> lifetimes: array<f32>;
+        @group(1) @binding(1) var sdfTexture: texture_2d<f32>;
+        @group(1) @binding(2) var sdfSampler: sampler;
+        @group(1) @binding(3) var<storage, read_write> positions: array<vec2f>;
+        @group(1) @binding(4) var<storage, read> originalPositions: array<vec2f>;
+        @group(1) @binding(5) var<storage, read> velocityRead: array<vec2f>;
+        @group(1) @binding(6) var<storage, read_write> velocityWrite: array<vec2f>;
+        @group(1) @binding(7) var<storage, read_write> lifetimes: array<f32>;
 
-        ${SDF_FUNCTIONS_WGSL}
+        fn hash(seed: f32) -> f32 {
+          let s = fract(seed * 0.1031);
+          let s2 = s * (s + 33.33);
+          return fract(s2 * (s2 + s2));
+        }
 
         fn randomSigned(seed: f32) -> f32 {
           return hash(seed) * 2.0 - 1.0;
+        }
+
+        // Convert world position to UV coordinates for SDF texture sampling
+        fn worldToUV(worldPos: vec2f) -> vec2f {
+          // World space is centered at origin, ranging roughly [-aspect*5, aspect*5] x [-5, 5]
+          // Convert to NDC [-1, 1]
+          let ndc = worldPos / vec2f(globals.aspect * 5.0, 5.0);
+          // Convert NDC to UV [0, 1] (flip Y because texture origin is top-left)
+          let uv = ndc * vec2f(0.5, -0.5) + 0.5;
+          return uv;
+        }
+
+        // Sample SDF from pre-rendered texture
+        fn sampleSdf(worldPos: vec2f) -> f32 {
+          let uv = worldToUV(worldPos);
+          // Read SDF directly from r16float texture (no unpacking needed!)
+          let sdf = textureSampleLevel(sdfTexture, sdfSampler, uv, 0.0).r;
+          return sdf;
         }
 
         @compute @workgroup_size(64, 1, 1)
@@ -316,10 +394,10 @@ export default function Page() {
           var vel = velocityRead[index];
           var life = lifetimes[index];
 
-          // Calculate SDF gradient
-          let sdfCenter = animatedSdf(pos, u.triangleRadius, u.time);
-          let sdfRight = animatedSdf(pos + vec2f(u.sdfEpsilon, 0.0), u.triangleRadius, u.time);
-          let sdfTop = animatedSdf(pos + vec2f(0.0, u.sdfEpsilon), u.triangleRadius, u.time);
+          // Sample SDF gradient from texture (much faster than computing!)
+          let sdfCenter = sampleSdf(pos);
+          let sdfRight = sampleSdf(pos + vec2f(u.sdfEpsilon, 0.0));
+          let sdfTop = sampleSdf(pos + vec2f(0.0, u.sdfEpsilon));
 
           let gradX = (sdfRight - sdfCenter) / u.sdfEpsilon;
           let gradY = (sdfTop - sdfCenter) / u.sdfEpsilon;
@@ -374,8 +452,20 @@ export default function Page() {
         maxLifetime: { value: MAX_LIFETIME },
       };
 
+      const computeUniformsAtoB = {
+        ...computeUniforms,
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
+      };
+
+      const computeUniformsBtoA = {
+        ...computeUniforms,
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
+      };
+
       computeAtoB = ctx.compute(computeShaderCode, {
-        uniforms: computeUniforms,
+        uniforms: computeUniformsAtoB,
       });
       computeAtoB.storage("positions", positionBuffer);
       computeAtoB.storage("originalPositions", originalPositionBuffer);
@@ -384,7 +474,7 @@ export default function Page() {
       computeAtoB.storage("lifetimes", lifetimeBuffer);
 
       computeBtoA = ctx.compute(computeShaderCode, {
-        uniforms: computeUniforms,
+        uniforms: computeUniformsBtoA,
       });
       computeBtoA.storage("positions", positionBuffer);
       computeBtoA.storage("originalPositions", originalPositionBuffer);
@@ -518,13 +608,49 @@ export default function Page() {
       // Create render target for postprocessing (auto-sized to canvas)
       renderTarget = ctx.target();
 
-      // Create custom sampler for blur postprocessing
-      // Using linear filtering with clamp-to-edge for smooth blur sampling
+      // Create blur sampler
       blurSampler = ctx.createSampler({
         magFilter: "nearest",
         minFilter: "nearest",
         addressModeU: "clamp-to-edge",
         addressModeV: "clamp-to-edge",
+      });
+
+      // Create SDF render pass - renders SDF to texture for compute shader sampling
+      const sdfShaderCode = /* wgsl */ `
+        struct SdfUniforms {
+          time: f32,
+          triangleRadius: f32,
+          focused: f32,
+        }
+        @group(1) @binding(0) var<uniform> u: SdfUniforms;
+
+        ${SDF_FUNCTIONS_WGSL}
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Convert pixel coords to world space (matching particle system scale)
+          let uv = pos.xy / globals.resolution;
+          // Map pixel coordinate to normalized device coordinates (NDC): [-1,1] with y up
+          let centered = uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
+          let worldPos = centered * vec2f(globals.aspect * 5.0, 5.0);
+
+          // Sample the animated SDF
+          let sdf = animatedSdf(worldPos, u.triangleRadius, u.time);
+
+          // Store SDF value directly in r16float texture (supports negative values!)
+          return vec4f(sdf, 0.0, 0.0, 1.0);
+        }
+      `;
+
+      const sdfUniforms = {
+        time: { value: 0.0 },
+        triangleRadius: { value: TRIANGLE_RADIUS },
+        focused: { value: 0.0 },
+      };
+
+      sdfPass = ctx.pass(sdfShaderCode, {
+        uniforms: sdfUniforms,
       });
 
       // Create debug pass for visualizing the SDF
@@ -584,6 +710,53 @@ export default function Page() {
 
       debugPass = ctx.pass(debugShaderCode, {
         uniforms: debugUniforms,
+      });
+
+      // Create SDF texture debug pass - visualizes the precomputed SDF texture
+      const sdfTextureDebugShaderCode = /* wgsl */ `
+        @group(1) @binding(0) var sdfTexture: texture_2d<f32>;
+        @group(1) @binding(1) var sdfSampler: sampler;
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Sample SDF texture at full resolution (upscaled from half-res)
+          let uv = pos.xy / globals.resolution;
+          let sdf = textureSample(sdfTexture, sdfSampler, uv).r;
+
+          // Visualize: negative (inside) = blue, positive (outside) = red
+          // Gradient shows distance
+          let inside = sdf < 0.0;
+          let dist = abs(sdf);
+          let normalizedDist = 1.0 - exp(-dist * 0.5);
+
+          var color: vec3f;
+          if (inside) {
+            color = vec3f(0.0, 0.2, 0.8) * (1.0 - normalizedDist);
+          } else {
+            color = vec3f(0.8, 0.2, 0.0) * (1.0 - normalizedDist);
+          }
+
+          // Add contour lines
+          let contourFreq = 0.5;
+          let contour = abs(fract(sdf * contourFreq) - 0.5) * 2.0;
+          let contourLine = smoothstep(0.9, 1.0, contour);
+          color = mix(color, vec3f(1.0), contourLine * 0.3);
+
+          // Highlight the zero crossing (edge)
+          let edge = smoothstep(0.1, 0.0, abs(sdf));
+          color = mix(color, vec3f(1.0, 1.0, 1.0), edge);
+
+          return vec4f(color, 1.0);
+        }
+      `;
+
+      const sdfTextureDebugUniforms = {
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
+      };
+
+      sdfTextureDebugPass = ctx.pass(sdfTextureDebugShaderCode, {
+        uniforms: sdfTextureDebugUniforms,
       });
 
       // Create blur postprocessing pass
@@ -721,6 +894,29 @@ export default function Page() {
         uniforms: blurDebugUniforms,
       });
 
+      // Add ResizeObserver to track canvas size changes
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const canvas = entry.target as HTMLCanvasElement;
+          const width = canvas.width;
+          const height = canvas.height;
+          
+          // Check if size changed (ignoring DPR as requested)
+          if (width !== currentCanvasWidth || height !== currentCanvasHeight) {
+            resizeSdfTarget(width, height);
+            
+            // Update compute shader uniforms with resized texture
+            // Note: resize() destroys old texture and creates new one, so we need to update references
+            if (sdfTarget) {
+              computeUniformsAtoB.sdfTexture.value = sdfTarget.texture;
+              computeUniformsBtoA.sdfTexture.value = sdfTarget.texture;
+              sdfTextureDebugUniforms.sdfTexture.value = sdfTarget.texture;
+            }
+          }
+        }
+      });
+      resizeObserver.observe(canvasRef.current);
+
       // Render loop
       let lastTime = performance.now();
       let totalTime = 0;
@@ -732,6 +928,23 @@ export default function Page() {
         const deltaTime = Math.min((now - lastTime) / 1000, 0.07);
         lastTime = now;
         totalTime += deltaTime;
+
+        // Render SDF texture only once per second OR when size changed
+        // This saves GPU cycles since the SDF animates slowly
+        const timeSinceLastSdfUpdate = totalTime - lastSdfUpdateTime;
+        const shouldUpdateSdf = needsSdfUpdate || timeSinceLastSdfUpdate >= SDF_UPDATE_INTERVAL;
+        
+        if (sdfTarget && shouldUpdateSdf) {
+          sdfUniforms.time.value = totalTime;
+          sdfUniforms.focused.value = focusedRef.current;
+          
+          ctx.setTarget(sdfTarget);
+          ctx.clear(sdfTarget, [0, 0, 0, 1]);
+          sdfPass.draw();
+          
+          lastSdfUpdateTime = totalTime;
+          needsSdfUpdate = false;
+        }
 
         // Update compute uniforms
         computeUniforms.deltaTime.value = deltaTime;
@@ -764,6 +977,11 @@ export default function Page() {
           ctx.setTarget(null);
           ctx.clear(null, [0, 0, 0, 1]);
           debugPass.draw();
+        } else if (debugSdfTextureRef.current) {
+          // SDF Texture Debug mode: visualize the precomputed SDF texture
+          ctx.setTarget(null);
+          ctx.clear(null, [0, 0, 0, 1]);
+          sdfTextureDebugPass.draw();
         } else if (debugBlurRef.current) {
           // Blur Debug mode: visualize blur size calculation
           ctx.setTarget(null);
@@ -792,6 +1010,12 @@ export default function Page() {
     return () => {
       disposed = true;
       cancelAnimationFrame(animationId);
+      if (resizeObserver) {
+        if (canvasRef.current) {
+          resizeObserver.unobserve(canvasRef.current);
+        }
+        resizeObserver.disconnect();
+      }
       ctx?.dispose();
     };
   }, []);
