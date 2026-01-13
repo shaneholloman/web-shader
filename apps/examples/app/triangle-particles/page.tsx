@@ -31,7 +31,7 @@ const SDF_EPSILON = 0.01; // SDF gradient sampling distance
 const FORCE_STRENGTH = 0.13; // How strongly SDF pushes particles
 const VELOCITY_DAMPING = 0.99; // Velocity decay per frame (0-1)
 const RESPAWN_VELOCITY_JITTER = INITIAL_VELOCITY_JITTER; // Velocity randomness on respawn
-const SDF_UPDATE_INTERVAL = 1.; // Update SDF texture once per second
+const SDF_UPDATE_INTERVAL = 0.1; // Update SDF texture once per second
 
 // Rendering
 const POINT_SIZE = 0.3;
@@ -85,16 +85,18 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
     
     px -= clamp(px, -2.0 * r, 0.0);
     let len = sqrt(px * px + py * py);
-    return -len * sign(py) - 0.7;
+    return -len * sign(py);
   }
 
   fn animatedSdf(p: vec2f, r: f32, time: f32) -> f32 {
-    let sdf = triangleSdf(p, r);
+    let sdf = triangleSdf(p, r + 0.7) - 0.1;
 
     // Noise-based force modulation
-    let noisePos = vec3f(p.x * 1., p.y * 1., time * 0.21);
+    let noiseSampleScale = 1.;
+    let noisePos = vec3f(p.x * noiseSampleScale, p.y * noiseSampleScale - time * 0.1, sin(time * 1.) * 0.5 + .5);
     let noiseSample = noise3d(noisePos) * 2.;
-    let noiseScale = step(sdf, 0.) * (1. - u.focused);
+    var noiseScale = step(sdf, 0.) * (1. - u.focused);
+    noiseScale = noiseScale * pow(clamp(1. - sdf * 0.1 - 0.2, 0., 1.), 0.5);
 
     return sdf - noiseSample * noiseScale;
   }
@@ -165,14 +167,14 @@ export default function Page() {
   const bumpIntensityRef = useRef(0);
   const bumpProgressRef = useRef(0);
   const debugSdfRef = useRef(false);
-  const debugSdfTextureRef = useRef(false);
+  const debugSdfTextureRef = useRef(true);
   const debugBlurRef = useRef(false);
   const blurAngleRef = useRef(26);
 
   // Leva controls
   useControls({
     debugSdfTexture: {
-      value: false,
+      value: true,
       label: "Debug SDF Texture",
       onChange: (v) => { debugSdfTextureRef.current = v; },
     },
