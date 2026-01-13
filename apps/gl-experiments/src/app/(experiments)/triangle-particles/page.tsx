@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { gl, GLContext, PingPongTarget, RenderTarget } from 'ralph-gl'
+import { gl, GLContext } from 'ralph-gl'
 
 // Particle system constants
 const NUM_PARTICLES = 12000
@@ -181,11 +181,7 @@ uniform sampler2D u_data;
 void main() {
   vec2 uv = gl_FragCoord.xy / vec2(${TEXTURE_SIZE}.0);
   fragColor = texture(u_data, uv);
-}`, {
-          uniforms: {
-            u_data: { value: null as any },
-          },
-        })
+}`)
 
         // Create temporary texture to upload initial data
         const tempTexture = ctx.target(TEXTURE_SIZE, TEXTURE_SIZE, {
