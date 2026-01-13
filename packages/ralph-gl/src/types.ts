@@ -5,8 +5,6 @@
  * Mirrors the types from ralph-gpu where applicable.
  */
 
-import type { RenderTarget } from './target'
-
 /**
  * Options for GLContext initialization
  */
@@ -40,14 +38,26 @@ export interface GLContextOptions {
 }
 
 /**
+ * Uniform wrapper (Three.js style)
+ */
+export interface Uniform<T = UniformValue> {
+  value: T
+}
+
+/**
+ * Uniforms record type
+ */
+export type Uniforms = Record<string, Uniform>
+
+/**
  * Options for Pass creation
  */
-export interface PassOptions {
+export interface PassOptions<U extends Uniforms = Uniforms> {
   /** Custom vertex shader (optional, uses fullscreen quad by default) */
   vertexShader?: string
   
   /** Initial uniform values */
-  uniforms?: Record<string, { value: UniformValue }>
+  uniforms?: U
   
   /** Blend mode preset or custom config */
   blend?: BlendMode | BlendConfig
@@ -59,9 +69,9 @@ export interface PassOptions {
 /**
  * Options for Material creation
  */
-export interface MaterialOptions {
+export interface MaterialOptions<U extends Uniforms = Uniforms> {
   /** Initial uniform values */
-  uniforms?: Record<string, { value: UniformValue }>
+  uniforms?: U
   
   /** Number of vertices to render */
   vertexCount?: number
@@ -132,7 +142,7 @@ export interface BlendConfig {
  * - Float32Array (mat4 if length 16, vec* otherwise)
  * - Int32Array (ivec*)
  * - Uint32Array (uvec*)
- * - RenderTarget (sampler2D)
+ * - WebGLTexture (sampler2D)
  */
 export type UniformValue =
   | number
@@ -142,7 +152,7 @@ export type UniformValue =
   | Float32Array
   | Int32Array
   | Uint32Array
-  | RenderTarget
+  | WebGLTexture
 
 /**
  * Primitive topology for drawing

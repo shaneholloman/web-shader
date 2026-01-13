@@ -7,7 +7,7 @@
  * Equivalent to the Context class in ralph-gpu.
  */
 
-import type { GLContextOptions, PassOptions, MaterialOptions, RenderTargetOptions } from './types'
+import type { GLContextOptions, PassOptions, MaterialOptions, RenderTargetOptions, Uniforms } from './types'
 import { Pass } from './pass'
 import { Material } from './material'
 import { RenderTarget } from './target'
@@ -128,17 +128,15 @@ export class GLContext {
   /**
    * Create a fullscreen fragment shader pass
    */
-  pass(fragmentGLSL: string, options?: PassOptions): Pass {
-    // TODO: Implement pass creation
-    return new Pass(this, fragmentGLSL, options)
+  pass<U extends Uniforms = Uniforms>(fragmentGLSL: string, options?: PassOptions<U>): Pass<U> {
+    return new Pass<U>(this, fragmentGLSL, options)
   }
   
   /**
    * Create a material with custom vertex and fragment shaders
    */
-  material(vertexGLSL: string, fragmentGLSL: string, options?: MaterialOptions): Material {
-    // TODO: Implement material creation
-    return new Material(this, vertexGLSL, fragmentGLSL, options)
+  material<U extends Uniforms = Uniforms>(vertexGLSL: string, fragmentGLSL: string, options?: MaterialOptions<U>): Material<U> {
+    return new Material<U>(this, vertexGLSL, fragmentGLSL, options)
   }
   
   /**

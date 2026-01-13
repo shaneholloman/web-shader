@@ -1,6 +1,6 @@
 import { GLContext } from './context.js';
 import { applyBlend } from './blend';
-import type { PassOptions, UniformValue, BlendMode, BlendConfig } from './types';
+import type { PassOptions, Uniforms, BlendMode, BlendConfig } from './types';
 
 /**
  * Built-in fullscreen quad vertex shader
@@ -28,7 +28,7 @@ void main() {
  * Renders a fullscreen quad using a fragment shader.
  * Automatically injects global uniforms (u_resolution, u_time, u_frame).
  */
-export class Pass {
+export class Pass<U extends Uniforms = Uniforms> {
   /** Reference to the GLContext */
   private ctx: GLContext;
   
@@ -41,8 +41,8 @@ export class Pass {
   /** Cached uniform locations */
   private uniformLocations: Map<string, WebGLUniformLocation | null> = new Map();
   
-  /** Custom uniform values */
-  private uniforms: Map<string, UniformValue> = new Map();
+  /** Custom uniform values (Three.js style) */
+  public uniforms: U;
   
   /** Blend mode configuration */
   private blend: BlendMode | BlendConfig | undefined;
@@ -59,7 +59,7 @@ export class Pass {
   constructor(
     ctx: GLContext,
     fragmentShader: string,
-    options: PassOptions = {}
+    options: PassOptions<U> = {}
   ) {
     this.ctx = ctx;
     this.blend = options.blend;
@@ -80,12 +80,8 @@ export class Pass {
       throw new Error('Failed to create VAO');
     }
     
-    // Initialize uniforms from options
-    if (options.uniforms) {
-      for (const [name, uniform] of Object.entries(options.uniforms)) {
-        this.uniforms.set(name, uniform.value);
-      }
-    }
+    // Initialize uniforms from options (reference, not copy)
+    this.uniforms = (options.uniforms ?? {}) as U;
   }
 
   /**
@@ -164,17 +160,6 @@ export class Pass {
   }
 
   /**
-   * Set a uniform value
-   * @param name - Uniform name
-   * @param value - Uniform value
-   * @returns The Pass instance for chaining
-   */
-  setUniform(name: string, value: UniformValue): this {
-    this.uniforms.set(name, value);
-    return this;
-  }
-  
-  /**
    * Set the blend mode
    * @param blend - Blend mode preset or custom config
    * @returns The Pass instance for chaining
@@ -215,16 +200,17 @@ export class Pass {
       gl.uniform1f(deltaTimeLoc, this.ctx.deltaTime);
     }
     
-    // Apply custom uniforms
-    for (const [name, value] of this.uniforms) {
+    // Apply custom uniforms - iterate over object entries
+    for (const [name, uniform] of Object.entries(this.uniforms)) {
       const location = this.getUniformLocation(name);
       if (!location) continue;
       
-      // Check if it's a RenderTarget (texture)
-      if (value && typeof value === 'object' && 'texture' in value) {
-        const target = value as any; // RenderTarget type
+      const value = uniform.value;
+      
+      // Check if it's a WebGLTexture
+      if (value instanceof WebGLTexture) {
         gl.activeTexture(gl.TEXTURE0 + this.textureUnit);
-        gl.bindTexture(gl.TEXTURE_2D, target.texture);
+        gl.bindTexture(gl.TEXTURE_2D, value);
         gl.uniform1i(location, this.textureUnit);
         this.textureUnit++;
       } else if (typeof value === 'number') {
@@ -316,6 +302,5 @@ export class Pass {
     this.program = null;
     this.vao = null;
     this.uniformLocations.clear();
-    this.uniforms.clear();
   }
 }

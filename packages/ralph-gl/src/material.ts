@@ -8,9 +8,8 @@
  */
 
 import type { GLContext } from './context'
-import type { MaterialOptions, UniformValue, Topology, BlendMode, BlendConfig } from './types'
+import type { MaterialOptions, Uniforms, Topology, BlendMode, BlendConfig } from './types'
 import type { StorageBuffer } from './storage'
-import type { RenderTarget } from './target'
 import { applyBlend } from './blend'
 
 /**
@@ -27,9 +26,9 @@ interface StorageBinding {
   divisor: number
 }
 
-export class Material {
-  /** Uniform values (Three.js style: { value: X }) */
-  uniforms: Record<string, { value: UniformValue }> = {}
+export class Material<U extends Uniforms = Uniforms> {
+  /** Uniform values (Three.js style) */
+  public uniforms: U
   
   /** Number of vertices to draw */
   vertexCount: number = 3
@@ -51,7 +50,7 @@ export class Material {
   private _storageBindings: StorageBinding[] = []
   private _textureUnit: number = 0
   
-  constructor(ctx: GLContext, vertexGLSL: string, fragmentGLSL: string, options?: MaterialOptions) {
+  constructor(ctx: GLContext, vertexGLSL: string, fragmentGLSL: string, options?: MaterialOptions<U>) {
     this._ctx = ctx
     this._gl = ctx.gl
     this._blend = options?.blend
@@ -65,10 +64,8 @@ export class Material {
       throw new Error('Failed to create VAO')
     }
     
-    // Apply options
-    if (options?.uniforms) {
-      this.uniforms = options.uniforms
-    }
+    // Initialize uniforms from options (reference, not copy)
+    this.uniforms = (options?.uniforms ?? {}) as U
     
     if (options?.vertexCount !== undefined) {
       this.vertexCount = options.vertexCount
@@ -243,18 +240,6 @@ export class Material {
   }
   
   /**
-   * Set a uniform value
-   */
-  set(name: string, value: UniformValue): this {
-    if (this.uniforms[name]) {
-      this.uniforms[name].value = value
-    } else {
-      this.uniforms[name] = { value }
-    }
-    return this
-  }
-  
-  /**
    * Set the blend mode
    * @param blend - Blend mode preset or custom config
    * @returns The Material instance for chaining
@@ -302,11 +287,10 @@ export class Material {
       
       const value = uniform.value
       
-      // Check if it's a RenderTarget (texture)
-      if (value && typeof value === 'object' && 'texture' in value) {
-        const target = value as RenderTarget
+      // Check if it's a WebGLTexture
+      if (value instanceof WebGLTexture) {
         gl.activeTexture(gl.TEXTURE0 + this._textureUnit)
-        gl.bindTexture(gl.TEXTURE_2D, target.texture)
+        gl.bindTexture(gl.TEXTURE_2D, value)
         gl.uniform1i(location, this._textureUnit)
         this._textureUnit++
       } else if (typeof value === 'number') {

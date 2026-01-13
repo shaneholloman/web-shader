@@ -200,7 +200,8 @@ void main() {
         
         // Copy to ping-pong buffers
         ctx.setTarget(posVelPingPong.write)
-        initPass.setUniform('u_data', tempTexture).draw()
+        initPass.uniforms.u_data = { value: tempTexture.texture! }
+        initPass.draw()
         posVelPingPong.swap()
         
         gl2.bindTexture(gl2.TEXTURE_2D, tempTexture.texture)
@@ -211,7 +212,8 @@ void main() {
         )
         
         ctx.setTarget(lifetimePingPong.write)
-        initPass.setUniform('u_data', tempTexture).draw()
+        initPass.uniforms.u_data.value = tempTexture.texture!
+        initPass.draw()
         lifetimePingPong.swap()
         
         gl2.bindTexture(gl2.TEXTURE_2D, tempTexture.texture)
@@ -222,7 +224,8 @@ void main() {
         )
         
         ctx.setTarget(originalPosTexture)
-        initPass.setUniform('u_data', tempTexture).draw()
+        initPass.uniforms.u_data.value = tempTexture.texture!
+        initPass.draw()
         
         tempTexture.dispose()
 
@@ -325,9 +328,9 @@ void main() {
 
         const simulationPass = ctx.pass(simulationShader, {
           uniforms: {
-            u_posVel: { value: posVelPingPong.read },
-            u_lifetime: { value: lifetimePingPong.read },
-            u_originalPos: { value: originalPosTexture },
+            u_posVel: { value: posVelPingPong.read.texture! },
+            u_lifetime: { value: lifetimePingPong.read.texture! },
+            u_originalPos: { value: originalPosTexture.texture! },
             u_deltaTime: { value: 0.016 },
             u_time: { value: 0.0 },
             u_focused: { value: 0.0 },
@@ -337,7 +340,7 @@ void main() {
         
         const lifetimePass = ctx.pass(lifetimeUpdateShader, {
           uniforms: {
-            u_lifetime: { value: lifetimePingPong.read },
+            u_lifetime: { value: lifetimePingPong.read.texture! },
             u_deltaTime: { value: 0.016 },
           },
         })
@@ -437,8 +440,8 @@ void main() {
           instances: NUM_PARTICLES,
           blend: 'additive',
           uniforms: {
-            u_posVel: { value: posVelPingPong.read },
-            u_lifetime: { value: lifetimePingPong.read },
+            u_posVel: { value: posVelPingPong.read.texture! },
+            u_lifetime: { value: lifetimePingPong.read.texture! },
             u_pointSize: { value: POINT_SIZE },
             u_textureSize: { value: TEXTURE_SIZE },
             u_fadeStart: { value: MAX_LIFETIME - FADE_DURATION },
@@ -462,14 +465,14 @@ void main() {
           totalTime += deltaTime
 
           // Update simulation uniforms
-          simulationPass.setUniform('u_deltaTime', deltaTime)
-          simulationPass.setUniform('u_time', totalTime)
-          simulationPass.setUniform('u_focused', focusedRef.current)
-          simulationPass.setUniform('u_posVel', posVelPingPong.read)
-          simulationPass.setUniform('u_lifetime', lifetimePingPong.read)
+          simulationPass.uniforms.u_deltaTime.value = deltaTime
+          simulationPass.uniforms.u_time.value = totalTime
+          simulationPass.uniforms.u_focused.value = focusedRef.current
+          simulationPass.uniforms.u_posVel.value = posVelPingPong.read.texture!
+          simulationPass.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
           
-          lifetimePass.setUniform('u_deltaTime', deltaTime)
-          lifetimePass.setUniform('u_lifetime', lifetimePingPong.read)
+          lifetimePass.uniforms.u_deltaTime.value = deltaTime
+          lifetimePass.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
 
           // Run simulation (write to write buffers)
           ctx.setTarget(posVelPingPong.write)
@@ -483,8 +486,8 @@ void main() {
           lifetimePingPong.swap()
 
           // Update render uniforms
-          material.set('u_posVel', posVelPingPong.read)
-          material.set('u_lifetime', lifetimePingPong.read)
+          material.uniforms.u_posVel.value = posVelPingPong.read.texture!
+          material.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
 
           // Render particles to screen
           ctx.setTarget(null)
