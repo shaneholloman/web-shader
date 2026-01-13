@@ -731,6 +731,15 @@ export function validateBindings(
   for (const [name, binding] of bindings.storageTextures) {
     if (!providedUniforms[name]) {
       errors.push(`  - binding ${binding}: texture_storage_2d '${name}' ✗ MISSING`);
+    } else {
+      // Check if value is actually a texture
+      const value = providedUniforms[name].value;
+      const isTexture = (value && typeof value === "object" && 
+        (("createView" in value) || ("texture" in value)));
+      
+      if (!isTexture) {
+        errors.push(`  - binding ${binding}: texture_storage_2d '${name}' ✗ NOT A TEXTURE`);
+      }
     }
   }
   

@@ -928,14 +928,7 @@ export default function Page() {
           // Check if size changed (ignoring DPR as requested)
           if (width !== currentCanvasWidth || height !== currentCanvasHeight) {
             resizeSdfTarget(width, height);
-            
-            // Update compute shader uniforms with resized texture
-            // Note: resize() destroys old texture and creates new one, so we need to update references
-            if (sdfTarget) {
-              computeUniformsAtoB.sdfTexture.value = sdfTarget.texture;
-              computeUniformsBtoA.sdfTexture.value = sdfTarget.texture;
-              sdfTextureDebugUniforms.sdfTexture.value = sdfTarget.texture;
-            }
+            // Texture references remain valid after resize - no need to update uniforms!
           }
         }
       });
