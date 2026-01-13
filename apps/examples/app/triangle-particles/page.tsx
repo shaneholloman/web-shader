@@ -37,7 +37,7 @@ const POINT_SIZE = 0.3;
 const FADE_DURATION = MAX_LIFETIME * 0.4; // How long the fade-out takes
 
 // Postprocessing blur
-const BLUR_MAX_SAMPLES = 32;
+const BLUR_MAX_SAMPLES = 16;
 const BLUR_MAX_SIZE = 0.02; // Maximum blur radius in NDC
 
 // ============================================================================
@@ -232,6 +232,7 @@ export default function Page() {
       }
 
       // Initialize particle data
+      // Note: We still use Float32Array for CPU-side initialization, but GPU will read as vec2f
       const positionArray = new Float32Array(NUM_PARTICLES * 2);
       const originalPositionArray = new Float32Array(NUM_PARTICLES * 2);
       const velocityArrayA = new Float32Array(NUM_PARTICLES * 2);
@@ -265,8 +266,8 @@ export default function Page() {
         velocityArrayB[i * 2 + 1] = velocityArrayA[i * 2 + 1];
       }
 
-      // Create storage buffers
-      positionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4); // 2 floats × 4 bytes
+      // Create storage buffers (same size, but GPU will read as structured vec2f)
+      positionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4); // vec2f array
       originalPositionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4);
       velocityBufferA = ctx.storage(NUM_PARTICLES * 2 * 4);
       velocityBufferB = ctx.storage(NUM_PARTICLES * 2 * 4);
@@ -293,10 +294,10 @@ export default function Page() {
           maxLifetime: f32,
         }
         @group(1) @binding(0) var<uniform> u: ComputeUniforms;
-        @group(1) @binding(1) var<storage, read_write> positions: array<f32>;
-        @group(1) @binding(2) var<storage, read> originalPositions: array<f32>;
-        @group(1) @binding(3) var<storage, read> velocityRead: array<f32>;
-        @group(1) @binding(4) var<storage, read_write> velocityWrite: array<f32>;
+        @group(1) @binding(1) var<storage, read_write> positions: array<vec2f>;
+        @group(1) @binding(2) var<storage, read> originalPositions: array<vec2f>;
+        @group(1) @binding(3) var<storage, read> velocityRead: array<vec2f>;
+        @group(1) @binding(4) var<storage, read_write> velocityWrite: array<vec2f>;
         @group(1) @binding(5) var<storage, read_write> lifetimes: array<f32>;
 
         ${SDF_FUNCTIONS_WGSL}
@@ -308,20 +309,11 @@ export default function Page() {
         @compute @workgroup_size(64, 1, 1)
         fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           let index = id.x;
-          if (index >= arrayLength(&positions) / 2u) { return; }
-
-          let posIdx = index * 2u;
+          if (index >= arrayLength(&positions)) { return; }
           
-          // Read current position
-          var posX = positions[posIdx];
-          var posY = positions[posIdx + 1u];
-          let pos = vec2f(posX, posY);
-
-          // Read velocity
-          var velX = velocityRead[posIdx];
-          var velY = velocityRead[posIdx + 1u];
-
-          // Read lifetime
+          // Read current position and velocity (clean vec2f access)
+          var pos = positions[index];
+          var vel = velocityRead[index];
           var life = lifetimes[index];
 
           // Calculate SDF gradient
@@ -331,45 +323,41 @@ export default function Page() {
 
           let gradX = (sdfRight - sdfCenter) / u.sdfEpsilon;
           let gradY = (sdfTop - sdfCenter) / u.sdfEpsilon;
+          let gradient = vec2f(gradX, gradY);
 
           let sdfSign = sign(sdfCenter);
 
           // Apply force
-          let forceX = gradX * u.forceStrength * sdfSign;
-          let forceY = gradY * u.forceStrength * sdfSign;
+          let force = gradient * u.forceStrength * sdfSign;
 
           // Update velocity with damping
-          velX *= u.velocityDamping;
-          velY *= u.velocityDamping;
-          velX += forceX;
-          velY += forceY;
+          vel *= u.velocityDamping;
+          vel += force;
 
           // Update position
-          posX += velX * u.deltaTime * u.velocityScale;
-          posY += velY * u.deltaTime * u.velocityScale;
+          pos += vel * u.deltaTime * u.velocityScale;
 
           // Update lifetime
           life += u.deltaTime;
 
           // Reset if lifetime exceeded
           if (life > u.maxLifetime) {
-            posX = originalPositions[posIdx];
-            posY = originalPositions[posIdx + 1u];
+            pos = originalPositions[index];
             
             // Random velocity on reset
             let seedX = f32(index) + u.time * 1000.0;
             let seedY = f32(index) + u.time * 1000.0 + 12345.0;
-            velX = randomSigned(seedX) * ${RESPAWN_VELOCITY_JITTER};
-            velY = randomSigned(seedY) * ${RESPAWN_VELOCITY_JITTER};
+            vel = vec2f(
+              randomSigned(seedX) * ${RESPAWN_VELOCITY_JITTER},
+              randomSigned(seedY) * ${RESPAWN_VELOCITY_JITTER}
+            );
             
             life = 0.0;
           }
 
           // Write back
-          positions[posIdx] = posX;
-          positions[posIdx + 1u] = posY;
-          velocityWrite[posIdx] = velX;
-          velocityWrite[posIdx + 1u] = velY;
+          positions[index] = pos;
+          velocityWrite[index] = vel;
           lifetimes[index] = life;
         }
       `;
@@ -416,7 +404,7 @@ export default function Page() {
           bumpProgress: f32,
         }
         @group(1) @binding(0) var<uniform> u: RenderUniforms;
-        @group(1) @binding(1) var<storage, read> positions: array<f32>;
+        @group(1) @binding(1) var<storage, read> positions: array<vec2f>;
         @group(1) @binding(2) var<storage, read> lifetimes: array<f32>;
 
         struct VertexOutput {
@@ -449,14 +437,11 @@ export default function Page() {
           @builtin(vertex_index) vid: u32,
           @builtin(instance_index) iid: u32
         ) -> VertexOutput {
-          // Read particle position
-          let posIdx = iid * 2u;
-          let x = positions[posIdx];
-          let y = positions[posIdx + 1u];
+          // Read particle position (clean vec2f access)
+          let pos2d = positions[iid];
           let life = lifetimes[iid];
 
           // Calculate SDF distance for bump effect
-          let pos2d = vec2f(x, y);
           let sdf = triangleSdf(pos2d, u.triangleRadius);
 
           // Quad vertices (two triangles)
@@ -474,13 +459,11 @@ export default function Page() {
           let localPos = quadPos * vec2f(particleSize / aspect, particleSize);
 
           // Apply offset and convert to clip space
-          let worldX = x;
-          let worldY = y + u.offsetY;
-          let clipX = worldX / (aspect * 5.0) + localPos.x;
-          let clipY = worldY / 5.0 + localPos.y;
+          let worldPos = pos2d + vec2f(0.0, u.offsetY);
+          let clipPos = worldPos / vec2f(aspect * 5.0, 5.0) + localPos;
 
           var out: VertexOutput;
-          out.pos = vec4f(clipX, clipY, 0.0, 1.0);
+          out.pos = vec4f(clipPos, 0.0, 1.0);
           out.uv = quadPos * 0.5 + 0.5; // Convert -1..1 to 0..1
           out.life = life;
           out.sdfDist = abs(sdf);
