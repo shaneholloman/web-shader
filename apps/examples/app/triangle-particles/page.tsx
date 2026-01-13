@@ -18,7 +18,7 @@ import {
 
 // Particle system
 const NUM_PARTICLES = 12000;
-const MAX_LIFETIME = 20;
+const MAX_LIFETIME = 10;
 const TRIANGLE_RADIUS = 3;
 const VELOCITY_SCALE = 0.04;
 
@@ -35,7 +35,7 @@ const SDF_UPDATE_INTERVAL = 1.; // Update SDF texture once per second
 
 // Rendering
 const POINT_SIZE = 0.3;
-const FADE_DURATION = MAX_LIFETIME * 0.4; // How long the fade-out takes
+const FADE_DURATION = MAX_LIFETIME * .4; // How long the fade-out takes
 
 // Postprocessing blur
 const BLUR_MAX_SAMPLES = 16;
