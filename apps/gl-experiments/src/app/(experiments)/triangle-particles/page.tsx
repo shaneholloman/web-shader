@@ -153,81 +153,28 @@ export default function TriangleParticles() {
           lifetimeData[i * 4 + 0] = Math.random() * MAX_LIFETIME
         }
 
-        // Create ping-pong targets for simulation (float textures)
+        // Create ping-pong targets with initial data
         const posVelPingPong = ctx.pingPong(TEXTURE_SIZE, TEXTURE_SIZE, {
           format: 'rgba32f',
           filter: 'nearest',
           wrap: 'clamp',
+          data: posVelData,
         })
         
         const lifetimePingPong = ctx.pingPong(TEXTURE_SIZE, TEXTURE_SIZE, {
           format: 'rgba32f',
           filter: 'nearest',
           wrap: 'clamp',
+          data: lifetimeData,
         })
         
-        // Create original position texture (doesn't change)
+        // Create original position texture with initial data
         const originalPosTexture = ctx.target(TEXTURE_SIZE, TEXTURE_SIZE, {
           format: 'rgba32f',
           filter: 'nearest',
           wrap: 'clamp',
+          data: originalPosData,
         })
-
-        // Initialize textures with data using a simple copy pass
-        const initPass = ctx.pass(`#version 300 es
-precision highp float;
-out vec4 fragColor;
-uniform sampler2D u_data;
-void main() {
-  vec2 uv = gl_FragCoord.xy / vec2(${TEXTURE_SIZE}.0);
-  fragColor = texture(u_data, uv);
-}`)
-
-        // Create temporary texture to upload initial data
-        const tempTexture = ctx.target(TEXTURE_SIZE, TEXTURE_SIZE, {
-          format: 'rgba32f',
-          filter: 'nearest',
-        })
-        
-        // Upload data to GPU (we need to write the data to the texture)
-        const gl2 = ctx.gl
-        gl2.bindTexture(gl2.TEXTURE_2D, tempTexture.texture)
-        gl2.texSubImage2D(
-          gl2.TEXTURE_2D, 0, 0, 0,
-          TEXTURE_SIZE, TEXTURE_SIZE,
-          gl2.RGBA, gl2.FLOAT, posVelData
-        )
-        
-        // Copy to ping-pong buffers
-        ctx.setTarget(posVelPingPong.write)
-        initPass.uniforms.u_data = { value: tempTexture.texture }
-        initPass.draw()
-        posVelPingPong.swap()
-        
-        gl2.bindTexture(gl2.TEXTURE_2D, tempTexture.texture)
-        gl2.texSubImage2D(
-          gl2.TEXTURE_2D, 0, 0, 0,
-          TEXTURE_SIZE, TEXTURE_SIZE,
-          gl2.RGBA, gl2.FLOAT, lifetimeData
-        )
-        
-        ctx.setTarget(lifetimePingPong.write)
-        initPass.uniforms.u_data.value = tempTexture.texture
-        initPass.draw()
-        lifetimePingPong.swap()
-        
-        gl2.bindTexture(gl2.TEXTURE_2D, tempTexture.texture)
-        gl2.texSubImage2D(
-          gl2.TEXTURE_2D, 0, 0, 0,
-          TEXTURE_SIZE, TEXTURE_SIZE,
-          gl2.RGBA, gl2.FLOAT, originalPosData
-        )
-        
-        ctx.setTarget(originalPosTexture)
-        initPass.uniforms.u_data.value = tempTexture.texture
-        initPass.draw()
-        
-        tempTexture.dispose()
 
         // ========================================================================
         // Create simulation pass (replaces compute shader)

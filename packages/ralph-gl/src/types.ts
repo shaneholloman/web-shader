@@ -98,6 +98,9 @@ export interface RenderTargetOptions {
   
   /** Wrap mode (default: 'clamp') */
   wrap?: 'clamp' | 'repeat' | 'mirror'
+  
+  /** Initial data to upload to texture */
+  data?: Float32Array | Uint8Array | Uint16Array | Uint32Array
 }
 
 /**

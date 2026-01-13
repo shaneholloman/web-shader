@@ -115,6 +115,11 @@ export class RenderTarget {
     this.texture = null as any
     
     this._createResources()
+    
+    // Upload initial data if provided
+    if (options?.data) {
+      this.write(options.data)
+    }
   }
   
   /**
@@ -248,6 +253,39 @@ export class RenderTarget {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     
     return pixels
+  }
+  
+  /**
+   * Write data to the texture
+   * @param data - Typed array containing pixel data
+   * @param x - X offset (default: 0)
+   * @param y - Y offset (default: 0)
+   * @param width - Width to write (default: full width)
+   * @param height - Height to write (default: full height)
+   */
+  write(
+    data: Float32Array | Uint8Array | Uint16Array | Uint32Array,
+    x: number = 0,
+    y: number = 0,
+    width?: number,
+    height?: number
+  ): void {
+    const gl = this._gl
+    const w = width ?? this.width
+    const h = height ?? this.height
+    const formatInfo = getFormatInfo(gl, this.format)
+    
+    gl.bindTexture(gl.TEXTURE_2D, this.texture)
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0, // level
+      x, y, // offset
+      w, h, // dimensions
+      formatInfo.formatEnum,
+      formatInfo.type,
+      data
+    )
+    gl.bindTexture(gl.TEXTURE_2D, null)
   }
   
   /**

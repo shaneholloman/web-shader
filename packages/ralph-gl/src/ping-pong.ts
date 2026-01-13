@@ -24,8 +24,12 @@ export class PingPongTarget {
     this._ctx = ctx
     
     // Create two render targets
+    // Pass data to read buffer, write buffer starts empty
     this.read = new RenderTarget(ctx, width, height, options)
-    this.write = new RenderTarget(ctx, width, height, options)
+    
+    // Create write buffer without data (starts empty)
+    const writeOptions = options ? { ...options, data: undefined } : undefined
+    this.write = new RenderTarget(ctx, width, height, writeOptions)
   }
   
   /**
