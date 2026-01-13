@@ -15,6 +15,57 @@ This document outlines the implementation plan for adding a comprehensive debugg
 - **Optional GPU timing** - WebGPU timestamp queries require explicit opt-in
 - **Export-friendly** - Support multiple export formats (Chrome Trace, Perfetto, JSON)
 
+## Development Workflow
+
+### Testing Changes in Real Environment
+
+**Important:** You can run the examples app to test your changes in a real browser environment as you implement features.
+
+**Monorepo Structure:**
+
+- `packages/core/` - The ralph-gpu library (your implementation target)
+- `apps/examples/` - Next.js app with live examples
+- Changes to `packages/core` trigger automatic rebuild and hot reload in the examples app
+
+```bash
+# Start the development server from the repo root
+pnpm dev
+
+# The examples app will be available at http://localhost:3000
+# Hot reload is enabled - changes to packages/core will rebuild automatically
+```
+
+**Recommended workflow:**
+
+1. Make changes to core library (`packages/core/src/`)
+2. View results immediately in browser via examples app
+3. Create a dedicated debug example page to test event system and profiler
+4. Use browser DevTools console to inspect events and profiler output
+5. Test GPU timing on different devices/browsers
+
+**Creating a test page:**
+
+```bash
+# Create a new example page for debugging
+mkdir -p apps/examples/app/debug-profiler
+touch apps/examples/app/debug-profiler/page.tsx
+```
+
+The page will be automatically available at `http://localhost:3000/debug-profiler`
+
+**Example test page location:** `apps/examples/app/debug-profiler/page.tsx`
+
+This real-time feedback loop is essential for:
+
+- Verifying events are emitted correctly
+- Testing profiler accuracy
+- Checking performance overhead
+- Validating export formats
+- Ensuring cross-browser compatibility
+- Testing on different devices/browsers
+
+**Pro tip:** Keep browser DevTools console open to see event logs and profiler output in real-time as you implement features.
+
 ## Architecture
 
 ```
@@ -303,7 +354,11 @@ interface FrameProfile {
 
 ## Implementation Checklist
 
-**Note:** This checklist can be modified as implementation progresses based on new findings, technical constraints, or better approaches discovered during development.
+**Notes:**
+
+- This checklist can be modified as implementation progresses based on new findings, technical constraints, or better approaches discovered during development.
+- **Test as you go:** Run `pnpm dev` to start the examples app and test changes in real-time. Create a debug example page early (see Phase 4.4) to experiment with features as you implement them.
+- The monorepo setup with hot reload makes it easy to iterate quickly on the core library while seeing results in the browser immediately.
 
 ### Phase 1: Core Event System
 
@@ -462,10 +517,13 @@ interface FrameProfile {
   - [ ] Document Profiler API
   - [ ] Add usage examples
 
-- [ ] **4.4** Create real-world example
-  - [ ] Add example to `/apps/examples`
-  - [ ] Show profiler UI with live stats
-  - [ ] Demonstrate export to Chrome Tracing
+- [ ] **4.4** Create real-world example in examples app
+  - [ ] Create `/apps/examples/app/debug-profiler/page.tsx`
+  - [ ] Show profiler UI with live stats (FPS, frame time, region breakdown)
+  - [ ] Demonstrate all event types being emitted
+  - [ ] Add export to Chrome Tracing button
+  - [ ] Include particle system + compute shader for realistic workload
+  - [ ] **Note:** This page can be created early and used throughout development for testing
 
 ### Phase 5: Export to Core Package
 

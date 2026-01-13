@@ -96,9 +96,31 @@ const DEBUG = process.env.DEBUG === "true" || process.argv.includes("--debug");
 const TASK = \`
 # Task: [Feature Name]
 
-## Working Directory
-You are running from: \${process.cwd()}
+## Working Directory & Navigation
+This script is running from: \${process.cwd()}
 Project root is: \${PROJECT_ROOT}
+
+### Repository Structure
+\\\`\\\`\\\`
+[Describe the key folders and their purpose, for example:]
+ralph-gpu/                    (project root)
+├── packages/
+│   ├── core/                 (main WebGPU library package)
+│   │   ├── src/              (library source code)
+│   │   └── tests/            (library tests)
+│   └── ralph/                (agent-loop package)
+├── apps/
+│   └── examples/             (Next.js app with examples)
+│       └── app/              (example pages)
+└── ralphs/
+    └── XX-feature-name/      (← YOU ARE HERE - this script's folder)
+\\\`\\\`\\\`
+
+### Navigation Instructions
+- To access project files: use relative paths from \${PROJECT_ROOT}
+- To access this script's files: use paths relative to \${process.cwd()}
+- Example: To edit core library: \`cd \${PROJECT_ROOT}/packages/core\`
+- Example: To update progress: \`cat >> \${process.cwd()}/.progress.md\`
 
 ## CRITICAL: Update Progress
 After EVERY significant action, update .progress.md in this folder:
@@ -122,6 +144,12 @@ After EVERY significant action, update .progress.md in this folder:
 ## Implementation Guide
 [Provide step-by-step instructions with code examples]
 
+## Browser Automation
+⚠️ **CRITICAL**: If this task requires browser automation, ALWAYS use headless mode:
+- Run all browser tests and visual checks in headless mode
+- Configure browser with \`headless: true\`
+- This improves performance and reliability
+
 ## Testing Commands
 \\\`\\\`\\\`bash
 cd \${PROJECT_ROOT}
@@ -140,7 +168,7 @@ async function main() {
   const startTime = Date.now();
 
   const agent = new LoopAgent({
-    model: AGENT_MODEL,
+    model: "google/gemini-3-flash",
     trace: true,  // Always enable traces
     task: TASK,
     rules: [brainRule, trackProgressRule, minimalChangesRule],
@@ -199,10 +227,12 @@ main().catch((error) => {
 2. **Track progress**: Update your original plan file at project root
 3. **Write detailed TASK strings** with:
 
+   - **Repository structure diagram**: Show the project layout and where this script lives
+   - **Navigation instructions**: Explain how to access different parts of the codebase
    - Clear context about current state
    - Specific acceptance criteria as checkboxes
    - Step-by-step implementation guide with code examples
-   - File paths and working directories clearly specified
+   - File paths and working directories clearly specified (with examples)
    - Reminder to update .progress.md frequently
    - Testing commands to validate the work
 
@@ -214,12 +244,20 @@ Include relevant rules in your LoopAgent configuration:
 
 - `brainRule` - Use `.brain/` folder for persistent knowledge
 - `trackProgressRule` - Track progress in `.progress.md`
-- `visualCheckRule` - Visually verify UI changes with browser
+- `visualCheckRule` - Visually verify UI changes with browser (always run in headless mode)
 - `testFirstRule` - Run tests before and after changes
 - `minimalChangesRule` - Keep changes surgical and focused
 - `explorationRule` - Explore codebase before editing
 - `gitCheckpointRule` - Commit after each change
 - `debugRule` - Systematic debugging approach
+
+### Browser Automation Configuration
+
+**CRITICAL**: Always run browser automation in **headless mode** for better performance and reliability:
+
+- When using browser tools, always specify headless mode in configuration
+- Include explicit instructions in TASK string to use headless browser
+- Example browser configuration: `headless: true`
 
 ## Execution Workflow
 
@@ -262,12 +300,14 @@ Include relevant rules in your LoopAgent configuration:
 
 ## Best Practices
 
+- **Repository structure clarity**: Always include a visual diagram of the repo structure in the TASK string so the LLM understands where it is and how to navigate
 - **Progress tracking**: Ralph tracks progress in its own folder (`.progress.md`, `.brain/`)
 - **Don't pre-create state files**: Let the agent create `.brain/` and `.progress.md` - provide templates in TASK string
 - **Always enable traces**: Use `trace: true` for debugging and analysis
 - **Only enable debug for issues**: Use `debug: false` by default, enable only when troubleshooting the runner itself
+- **Browser headless mode**: Always run browser automation in headless mode for performance and reliability
 - **One ralph at a time**: Create and run ralphs sequentially, not in parallel. This allows you to pivot the scope of your larger goal based on results and adapt your approach between tasks
 - **Verification is critical**: Always include TypeScript verification functions that run after completion
-- **Be specific in TASK**: Include exact file paths, working directories, code examples, and step-by-step instructions
+- **Be specific in TASK**: Include exact file paths, working directories, code examples, and step-by-step navigation instructions
 - **Documentation**: Ask ralphs to update docs, tests, and cursor rules as needed
 - **Keep executing until completion**: Continue working through all tasks in your plan until the entire long-term goal is achieved. Don't stop after individual ralphs complete. Keep running sleeps commands to check progress.
