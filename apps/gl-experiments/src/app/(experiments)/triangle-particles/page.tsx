@@ -200,7 +200,7 @@ void main() {
         
         // Copy to ping-pong buffers
         ctx.setTarget(posVelPingPong.write)
-        initPass.uniforms.u_data = { value: tempTexture.texture! }
+        initPass.uniforms.u_data = { value: tempTexture.texture }
         initPass.draw()
         posVelPingPong.swap()
         
@@ -212,7 +212,7 @@ void main() {
         )
         
         ctx.setTarget(lifetimePingPong.write)
-        initPass.uniforms.u_data.value = tempTexture.texture!
+        initPass.uniforms.u_data.value = tempTexture.texture
         initPass.draw()
         lifetimePingPong.swap()
         
@@ -224,7 +224,7 @@ void main() {
         )
         
         ctx.setTarget(originalPosTexture)
-        initPass.uniforms.u_data.value = tempTexture.texture!
+        initPass.uniforms.u_data.value = tempTexture.texture
         initPass.draw()
         
         tempTexture.dispose()
@@ -328,9 +328,9 @@ void main() {
 
         const simulationPass = ctx.pass(simulationShader, {
           uniforms: {
-            u_posVel: { value: posVelPingPong.read.texture! },
-            u_lifetime: { value: lifetimePingPong.read.texture! },
-            u_originalPos: { value: originalPosTexture.texture! },
+            u_posVel: { value: posVelPingPong.read.texture },
+            u_lifetime: { value: lifetimePingPong.read.texture },
+            u_originalPos: { value: originalPosTexture.texture },
             u_deltaTime: { value: 0.016 },
             u_time: { value: 0.0 },
             u_focused: { value: 0.0 },
@@ -340,7 +340,7 @@ void main() {
         
         const lifetimePass = ctx.pass(lifetimeUpdateShader, {
           uniforms: {
-            u_lifetime: { value: lifetimePingPong.read.texture! },
+            u_lifetime: { value: lifetimePingPong.read.texture },
             u_deltaTime: { value: 0.016 },
           },
         })
@@ -440,8 +440,8 @@ void main() {
           instances: NUM_PARTICLES,
           blend: 'additive',
           uniforms: {
-            u_posVel: { value: posVelPingPong.read.texture! },
-            u_lifetime: { value: lifetimePingPong.read.texture! },
+            u_posVel: { value: posVelPingPong.read.texture },
+            u_lifetime: { value: lifetimePingPong.read.texture },
             u_pointSize: { value: POINT_SIZE },
             u_textureSize: { value: TEXTURE_SIZE },
             u_fadeStart: { value: MAX_LIFETIME - FADE_DURATION },
@@ -468,11 +468,11 @@ void main() {
           simulationPass.uniforms.u_deltaTime.value = deltaTime
           simulationPass.uniforms.u_time.value = totalTime
           simulationPass.uniforms.u_focused.value = focusedRef.current
-          simulationPass.uniforms.u_posVel.value = posVelPingPong.read.texture!
-          simulationPass.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
+          simulationPass.uniforms.u_posVel.value = posVelPingPong.read.texture
+          simulationPass.uniforms.u_lifetime.value = lifetimePingPong.read.texture
           
           lifetimePass.uniforms.u_deltaTime.value = deltaTime
-          lifetimePass.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
+          lifetimePass.uniforms.u_lifetime.value = lifetimePingPong.read.texture
 
           // Run simulation (write to write buffers)
           ctx.setTarget(posVelPingPong.write)
@@ -486,8 +486,8 @@ void main() {
           lifetimePingPong.swap()
 
           // Update render uniforms
-          material.uniforms.u_posVel.value = posVelPingPong.read.texture!
-          material.uniforms.u_lifetime.value = lifetimePingPong.read.texture!
+          material.uniforms.u_posVel.value = posVelPingPong.read.texture
+          material.uniforms.u_lifetime.value = lifetimePingPong.read.texture
 
           // Render particles to screen
           ctx.setTarget(null)

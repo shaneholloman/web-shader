@@ -77,25 +77,25 @@ function getWrap(gl: WebGL2RenderingContext, wrap: 'clamp' | 'repeat' | 'mirror'
 
 export class RenderTarget {
   /** The underlying framebuffer */
-  framebuffer: WebGLFramebuffer | null = null
+  framebuffer: WebGLFramebuffer
   
   /** The color attachment texture */
-  texture: WebGLTexture | null = null
+  texture: WebGLTexture
   
   /** Width in pixels */
-  width: number = 0
+  width: number
   
   /** Height in pixels */
-  height: number = 0
+  height: number
   
   /** Texture format */
-  format: TextureFormat = 'rgba8'
+  format: TextureFormat
   
   /** Filter mode */
-  filter: 'nearest' | 'linear' = 'linear'
+  filter: 'nearest' | 'linear'
   
   /** Wrap mode */
-  wrap: 'clamp' | 'repeat' | 'mirror' = 'clamp'
+  wrap: 'clamp' | 'repeat' | 'mirror'
   
   private _ctx: GLContext
   private _gl: WebGL2RenderingContext
@@ -110,6 +110,10 @@ export class RenderTarget {
     this.filter = options?.filter ?? 'linear'
     this.wrap = options?.wrap ?? 'clamp'
     
+    // Initialize to satisfy TypeScript - will be set immediately
+    this.framebuffer = null as any
+    this.texture = null as any
+    
     this._createResources()
   }
   
@@ -120,18 +124,19 @@ export class RenderTarget {
     const gl = this._gl
     
     // Create framebuffer
-    this.framebuffer = gl.createFramebuffer()
-    if (!this.framebuffer) {
+    const framebuffer = gl.createFramebuffer()
+    if (!framebuffer) {
       throw new FramebufferError('Failed to create framebuffer')
     }
+    this.framebuffer = framebuffer
     
     // Create texture
-    this.texture = gl.createTexture()
-    if (!this.texture) {
+    const texture = gl.createTexture()
+    if (!texture) {
       gl.deleteFramebuffer(this.framebuffer)
-      this.framebuffer = null
       throw new FramebufferError('Failed to create texture for framebuffer')
     }
+    this.texture = texture
     
     // Get format info
     const formatInfo = getFormatInfo(gl, this.format)
@@ -250,15 +255,7 @@ export class RenderTarget {
    */
   dispose(): void {
     const gl = this._gl
-    
-    if (this.framebuffer) {
-      gl.deleteFramebuffer(this.framebuffer)
-      this.framebuffer = null
-    }
-    
-    if (this.texture) {
-      gl.deleteTexture(this.texture)
-      this.texture = null
-    }
+    gl.deleteFramebuffer(this.framebuffer)
+    gl.deleteTexture(this.texture)
   }
 }
