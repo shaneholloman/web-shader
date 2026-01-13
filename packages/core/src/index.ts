@@ -11,11 +11,12 @@ export { gpu, GPUContext } from "./context";
 export { Pass } from "./pass";
 export { Material } from "./material";
 export { ComputeShader } from "./compute";
-export { RenderTarget } from "./target";
+export { RenderTarget, TextureReference } from "./target";
 export { PingPongTarget } from "./ping-pong";
 export { MultiRenderTarget } from "./mrt";
 export { StorageBuffer } from "./storage";
 export { Particles } from "./particles";
+export { Sampler } from "./sampler";
 
 // Errors
 export {
@@ -45,7 +46,10 @@ export type {
   PrimitiveTopology,
   IndexFormat,
   ParticlesOptions,
+  RenderTargetUsage,
 } from "./types";
+
+export type { SamplerDescriptor } from "./sampler";
 
 /**
  * Library version

@@ -1,12 +1,12 @@
 # ralph-gpu
 
 <p align="center">
-  <strong>~7kB gzipped</strong> · WebGPU shader library for creative coding
+  <strong>~8kB gzipped</strong> · WebGPU shader library for creative coding
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/gzip-7.1kB-blue" alt="Bundle size: ~6kB gzipped" />
-  <img src="https://img.shields.io/badge/brotli-6.4kB-purple" alt="Brotli: ~5.4kB" />
+  <img src="https://img.shields.io/badge/gzip-8.3kB-blue" alt="Bundle size: ~8.3kB gzipped" />
+  <img src="https://img.shields.io/badge/brotli-7.4kB-purple" alt="Brotli: ~7.4kB" />
   <img src="https://img.shields.io/badge/WebGPU-ready-green" alt="WebGPU Ready" />
 </p>
 
@@ -37,11 +37,13 @@ frame();
 - **Simple API** — Write shaders, draw them. That's it.
 - **Auto-injected uniforms** — `resolution`, `time`, `deltaTime`, `frame`, `aspect` available in all shaders
 - **Ping-pong buffers** — First-class support for iterative effects (fluid sim, blur, etc.)
-- **Three.js-style uniforms** — `{ value: X }` pattern for reactive updates
-- **Compute shaders** — GPU-accelerated parallel computation
+- **Reactive uniforms** — `{ value: X }` pattern for automatic GPU updates
+- **Compute shaders** — GPU-accelerated parallel computation with full texture support
+- **Storage textures** — Write to textures in compute shaders for advanced effects
+- **Custom samplers** — Explicit control over texture filtering and wrapping modes
 - **Storage buffers** — For particles, simulations, and custom data
 - **Blend modes** — Presets (`additive`, `alpha`, `multiply`) + custom configs
-- **Render targets** — Offscreen rendering with configurable format, filter, wrap
+- **Render targets** — Offscreen rendering with configurable format, filter, wrap, and storage usage
 
 ## Installation
 
@@ -164,6 +166,38 @@ const uniforms = {
 // inputTex → inputSampler or inputTexSampler
 ```
 
+#### Creating Custom Samplers
+
+Use `ctx.createSampler()` for explicit control over texture filtering and wrapping:
+
+```typescript
+// Linear filtering with clamp-to-edge
+const linearClamp = ctx.createSampler({
+  magFilter: "linear",
+  minFilter: "linear",
+  addressModeU: "clamp-to-edge",
+  addressModeV: "clamp-to-edge",
+});
+
+// Nearest filtering with repeat
+const nearestRepeat = ctx.createSampler({
+  magFilter: "nearest",
+  minFilter: "nearest",
+  addressModeU: "repeat",
+  addressModeV: "repeat",
+});
+
+// Reuse across multiple textures
+const uniforms = {
+  texture1: { value: tex1.texture },
+  sampler1: { value: linearClamp },
+  texture2: { value: tex2.texture },
+  sampler2: { value: nearestRepeat },
+};
+```
+
+Samplers can be reused across multiple shaders for consistency and performance.
+
 ## Usage with React
 
 ```tsx
@@ -278,11 +312,14 @@ scenePass.draw();
 const displayUniforms = {
   inputTex: { value: buffer }, // Full RenderTarget (includes texture + sampler)
   // OR
-  inputTex: { value: buffer.texture }, // Just the GPUTexture
+  inputTex: { value: buffer.texture }, // Stable texture reference
   inputSampler: { value: mySampler }, // Explicit sampler (optional)
 };
 ctx.setTarget(null); // Back to screen
 displayPass.draw();
+
+// Resize stability - texture references remain valid!
+buffer.resize(1024, 1024); // ✅ No need to update displayUniforms.inputTex
 ```
 
 ## Ping-Pong Buffers
@@ -309,6 +346,8 @@ velocity.swap();
 
 ## Compute Shaders
 
+### Basic Compute with Storage Buffers
+
 ```typescript
 const particleCompute = ctx.compute(/* wgsl */ `
   struct Particle { pos: vec2f, vel: vec2f }
@@ -324,6 +363,85 @@ const particleCompute = ctx.compute(/* wgsl */ `
 // Dispatch compute work
 particleCompute.storage("particles", particleBuffer);
 particleCompute.dispatch(numParticles / 64);
+```
+
+### Compute with Texture Sampling
+
+Compute shaders can sample from textures (e.g., reading from an SDF texture):
+
+```typescript
+const compute = ctx.compute(/* wgsl */ `
+  @group(1) @binding(0) var<uniform> u: MyUniforms;
+  @group(1) @binding(1) var<storage, read_write> data: array<f32>;
+  @group(1) @binding(2) var myTexture: texture_2d<f32>;
+  @group(1) @binding(3) var mySampler: sampler;
+  
+  @compute @workgroup_size(64)
+  fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let uv = vec2f(f32(id.x) / 512.0, f32(id.y) / 512.0);
+    let texValue = textureSampleLevel(myTexture, mySampler, uv, 0.0);
+    data[id.x] = texValue.r;
+  }
+`, {
+  uniforms: {
+    myTexture: { value: renderTarget }, // RenderTarget auto-extracts texture + sampler
+  },
+});
+
+compute.storage("data", dataBuffer);
+compute.dispatch(512);
+```
+
+### Compute with Storage Textures (Write Operations)
+
+For writing to textures in compute shaders, use storage textures:
+
+```typescript
+// Create a render target with storage usage
+const outputTarget = ctx.target(512, 512, {
+  format: "rgba16float",
+  usage: "storage", // Enable write operations
+});
+
+const compute = ctx.compute(/* wgsl */ `
+  @group(1) @binding(0) var input: texture_2d<f32>;
+  @group(1) @binding(1) var inputSampler: sampler;
+  @group(1) @binding(2) var output: texture_storage_2d<rgba16float, write>;
+  
+  @compute @workgroup_size(8, 8)
+  fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let uv = vec2f(id.xy) / 512.0;
+    let color = textureSampleLevel(input, inputSampler, uv, 0.0);
+    textureStore(output, id.xy, color * 2.0); // Write to storage texture
+  }
+`, {
+  uniforms: {
+    input: { value: inputTarget },
+    output: { value: outputTarget },
+  },
+});
+
+compute.dispatch(512 / 8, 512 / 8);
+```
+
+### Texture Loading Without Sampler
+
+Use `textureLoad()` for direct pixel access without sampling:
+
+```typescript
+const compute = ctx.compute(/* wgsl */ `
+  @group(1) @binding(0) var dataTexture: texture_2d<f32>;
+  
+  @compute @workgroup_size(64)
+  fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let value = textureLoad(dataTexture, vec2i(id.xy), 0).r;
+    // No sampler needed for textureLoad
+  }
+`, {
+  uniforms: {
+    dataTexture: { value: target.texture },
+  },
+});
 ```
 
 ## Materials (Custom Geometry)
@@ -442,6 +560,7 @@ ctx.target(width?, height?, options?)      // → RenderTarget (auto-sizes to ca
 ctx.pingPong(width?, height?, options?)    // → PingPongTarget (auto-sizes to canvas if omitted)
 ctx.mrt(outputs, width?, height?)          // → MultiRenderTarget (auto-sizes to canvas if omitted)
 ctx.storage(byteSize)                      // → StorageBuffer
+ctx.createSampler(descriptor?)             // → Sampler (texture sampler with custom filtering/wrapping)
 
 ctx.setTarget(target | null)               // Set render target
 ctx.setViewport(x?, y?, w?, h?)            // Set viewport
@@ -482,14 +601,32 @@ compute.dispose()                          // Cleanup
 ### Render Target
 
 ```typescript
-target.texture                             // GPUTexture
+target.texture                             // TextureReference (stable across resizes - use for uniforms)
+target.gpuTexture                          // GPUTexture (direct access - becomes invalid after resize)
 target.sampler                             // GPUSampler
-target.view                                // GPUTextureView
+target.view                                // GPUTextureView (auto-updated on resize)
 target.width / target.height               // Dimensions
 target.format                              // Texture format
-target.resize(width, height)               // Resize
+target.usage                               // Usage mode ("render" | "storage" | "both")
+target.resize(width, height)               // Resize (texture references remain valid!)
 target.readPixels(x?, y?, w?, h?)          // → Promise<Uint8Array | Float32Array>
 target.dispose()                           // Cleanup
+```
+
+**Resize Stability**: Texture references stay valid after resize. Use `.texture` for uniforms (recommended) and `.gpuTexture` only when you need direct GPU texture access.
+
+**Render Target Options:**
+
+```typescript
+{
+  format?: "rgba8unorm" | "rgba16float" | "r16float" | "rg16float" | "r32float", // Default: "rgba8unorm"
+  filter?: "linear" | "nearest",         // Default: "linear"
+  wrap?: "clamp" | "repeat" | "mirror",  // Default: "clamp"
+  usage?: "render" | "storage" | "both", // Default: "render"
+  // "render": For rendering and sampling
+  // "storage": For compute shader write operations (texture_storage_2d)
+  // "both": For both rendering and storage operations
+}
 ```
 
 ### Ping-Pong
@@ -510,7 +647,53 @@ storage.write(data); // Write TypedArray
 storage.dispose(); // Cleanup
 ```
 
-## Errors
+### Sampler
+
+```typescript
+sampler.gpuSampler; // GPUSampler
+sampler.descriptor; // SamplerDescriptor (readonly)
+sampler.dispose(); // Cleanup (currently no-op, kept for API consistency)
+```
+
+**Sampler Options:**
+
+```typescript
+{
+  magFilter?: "linear" | "nearest",      // Default: "linear"
+  minFilter?: "linear" | "nearest",      // Default: "linear"
+  mipmapFilter?: "linear" | "nearest",   // Default: "linear"
+  addressModeU?: "clamp-to-edge" | "repeat" | "mirror-repeat", // Default: "clamp-to-edge"
+  addressModeV?: "clamp-to-edge" | "repeat" | "mirror-repeat", // Default: "clamp-to-edge"
+  addressModeW?: "clamp-to-edge" | "repeat" | "mirror-repeat", // Default: "clamp-to-edge"
+  lodMinClamp?: number,                  // Default: 0
+  lodMaxClamp?: number,                  // Default: 32
+  compare?: "never" | "less" | "equal" | "less-equal" | "greater" | "not-equal" | "greater-equal" | "always",
+  maxAnisotropy?: number,                // Default: 1
+}
+```
+
+## Exports
+
+### Classes
+
+```typescript
+import {
+  gpu,              // Main entry point
+  GPUContext,       // GPU context class
+  Pass,             // Fullscreen pass
+  Material,         // Custom vertex shader
+  ComputeShader,    // Compute shader
+  RenderTarget,     // Render target
+  TextureReference, // Stable texture reference (used internally by RenderTarget)
+  PingPongTarget,   // Ping-pong buffer
+  MultiRenderTarget,// Multiple render targets
+  StorageBuffer,    // Storage buffer
+  Particles,        // Particle system helper
+  Sampler,          // Texture sampler
+} from "ralph-gpu";
+```
+
+### Errors
 
 ```typescript
 import {
@@ -536,10 +719,10 @@ try {
 
 | Format | Raw | Gzip | Brotli |
 |--------|-----|------|--------|
-| index.js | 27.61 kB | 7.30 kB | 6.53 kB |
-| index.mjs | 27.10 kB | 7.11 kB | 6.35 kB |
+| index.js | 32.95 kB | 8.51 kB | 7.56 kB |
+| index.mjs | 32.44 kB | 8.34 kB | 7.41 kB |
 
-> 📦 **~7.1 kB** gzipped (ESM)
+> 📦 **~8.3 kB** gzipped (ESM)
 
 ## Browser Support
 

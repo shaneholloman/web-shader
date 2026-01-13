@@ -6,6 +6,7 @@ import {
   Material,
   ComputeShader,
   RenderTarget,
+  TextureReference,
   PingPongTarget,
   MultiRenderTarget,
   StorageBuffer,
@@ -45,6 +46,11 @@ describe('API Exports', () => {
   it('should export RenderTarget class', () => {
     expect(RenderTarget).toBeDefined();
     expect(typeof RenderTarget).toBe('function');
+  });
+
+  it('should export TextureReference class', () => {
+    expect(TextureReference).toBeDefined();
+    expect(typeof TextureReference).toBe('function');
   });
 
   it('should export PingPongTarget class', () => {

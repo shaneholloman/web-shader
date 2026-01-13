@@ -10,6 +10,7 @@ import {
   updateUniformBuffer,
   collectTextureBindings,
   parseBindGroup1Bindings,
+  validateBindings,
 } from "./uniforms";
 import type { StorageBuffer } from "./storage";
 
@@ -23,7 +24,6 @@ export class ComputeShader {
   private pipeline: GPUComputePipeline | null = null;
   private uniformBuffer: GPUBuffer | null = null;
   private uniformBufferSize = 0;
-  private bindGroup: GPUBindGroup | null = null;
   private storageBuffers = new Map<string, StorageBuffer>();
   private globalsBuffer: GPUBuffer;
   private workgroupSize: [number, number, number];
@@ -103,6 +103,19 @@ ${this.wgsl}
 
       // Parse bindings from WGSL to match layout: 'auto'
       const bindings = parseBindGroup1Bindings(this.wgsl);
+      
+      // Validate bindings and provide helpful error message if there's a mismatch
+      const validationError = validateBindings(
+        "compute",
+        bindings,
+        this._uniforms,
+        this.storageBuffers
+      );
+      if (validationError) {
+        console.error(validationError);
+        // Continue anyway - WebGPU will provide its own error if bindings are actually wrong
+      }
+      
       const bindGroupEntries: GPUBindGroupEntry[] = [];
 
       // Add uniform buffer if present and used
@@ -116,7 +129,18 @@ ${this.wgsl}
       // Add textures and samplers
       const textures = collectTextureBindings(this._uniforms);
       for (const [name, { texture, sampler }] of textures) {
-        // Find texture binding
+        // Check for storage texture first (for write operations)
+        const storageBinding = bindings.storageTextures.get(name);
+        if (storageBinding !== undefined) {
+          // Storage textures don't use samplers
+          bindGroupEntries.push({
+            binding: storageBinding,
+            resource: texture.createView(),
+          });
+          continue; // Successfully bound as storage texture
+        }
+        
+        // Find regular texture binding
         const textureBinding = bindings.textures.get(name);
         if (textureBinding !== undefined) {
           bindGroupEntries.push({
@@ -125,6 +149,7 @@ ${this.wgsl}
           });
 
           // Add sampler binding if present
+          // Note: sampler is optional - textureLoad() doesn't require one
           if (sampler) {
             // Try to find sampler binding by name convention
             let samplerBinding = bindings.samplers.get(`${name}Sampler`);
@@ -134,16 +159,24 @@ ${this.wgsl}
             if (samplerBinding === undefined && name.endsWith("Tex")) {
               samplerBinding = bindings.samplers.get(`${name.slice(0, -3)}Sampler`);
             }
+            if (samplerBinding === undefined && name.endsWith("Texture")) {
+              samplerBinding = bindings.samplers.get(`${name.slice(0, -7)}Sampler`);
+            }
             
             if (samplerBinding !== undefined) {
               bindGroupEntries.push({
                 binding: samplerBinding,
                 resource: sampler,
               });
-            } else {
-              console.warn(`Could not find sampler binding for texture '${name}'. Expected '${name}Sampler', '${name}_sampler', or similar.`);
+            }
+            // Only warn if shader actually declares the sampler binding
+            else if (bindings.samplers.size > 0) {
+              console.warn(`[ralph-gpu] Sampler provided for texture '${name}' but could not find matching sampler binding in shader. Expected '${name}Sampler', '${name}_sampler', or similar.`);
             }
           }
+        } else {
+          // Only warn if not bound as storage texture
+          console.warn(`[ralph-gpu] Texture '${name}' provided in uniforms but not found in shader bindings.`);
         }
       }
 
@@ -167,18 +200,6 @@ ${this.wgsl}
         },
       });
 
-      // Create bind groups using auto-generated layouts
-      // Group 0: Globals
-      
-      // Group 1: User uniforms (if any bindings exist)
-      if (bindGroupEntries.length > 0) {
-        const userBindGroupLayout = this.pipeline.getBindGroupLayout(1);
-        this.bindGroup = this.device.createBindGroup({
-          layout: userBindGroupLayout,
-          entries: bindGroupEntries,
-        });
-      }
-
       this.needsRebuild = false;
     } catch (error) {
       if (error instanceof ShaderCompileError) {
@@ -194,6 +215,102 @@ ${this.wgsl}
   storage(name: string, buffer: StorageBuffer): void {
     this.storageBuffers.set(name, buffer);
     this.needsRebuild = true;
+  }
+
+  /**
+   * Create bind group with current texture/buffer bindings
+   * Called each frame to ensure textures are up-to-date
+   */
+  private createBindGroup(): GPUBindGroup | null {
+    if (!this.pipeline) return null;
+
+    // Parse bindings from shader
+    const bindings = parseBindGroup1Bindings(this.wgsl);
+    const bindGroupEntries: GPUBindGroupEntry[] = [];
+
+    // Add uniform buffer if present and used
+    if (this.uniformBuffer && bindings.uniformBuffer !== undefined) {
+      bindGroupEntries.push({
+        binding: bindings.uniformBuffer,
+        resource: { buffer: this.uniformBuffer },
+      });
+    }
+
+    // Add textures and samplers
+    const textures = collectTextureBindings(this._uniforms);
+    for (const [name, { texture, sampler }] of textures) {
+      // Check for storage texture first (for write operations)
+      const storageBinding = bindings.storageTextures.get(name);
+      if (storageBinding !== undefined) {
+        // Storage textures don't use samplers
+        bindGroupEntries.push({
+          binding: storageBinding,
+          resource: texture.createView(),
+        });
+        continue; // Successfully bound as storage texture
+      }
+      
+      // Find regular texture binding
+      const textureBinding = bindings.textures.get(name);
+      if (textureBinding !== undefined) {
+        bindGroupEntries.push({
+          binding: textureBinding,
+          resource: texture.createView(),
+        });
+
+        // Add sampler binding if present
+        // Note: sampler is optional - textureLoad() doesn't require one
+        if (sampler) {
+          // Try to find sampler binding by name convention
+          let samplerBinding = bindings.samplers.get(`${name}Sampler`);
+          if (samplerBinding === undefined) {
+            samplerBinding = bindings.samplers.get(`${name}_sampler`);
+          }
+          if (samplerBinding === undefined && name.endsWith("Tex")) {
+            samplerBinding = bindings.samplers.get(`${name.slice(0, -3)}Sampler`);
+          }
+          if (samplerBinding === undefined && name.endsWith("Texture")) {
+            samplerBinding = bindings.samplers.get(`${name.slice(0, -7)}Sampler`);
+          }
+          
+          if (samplerBinding !== undefined) {
+            bindGroupEntries.push({
+              binding: samplerBinding,
+              resource: sampler,
+            });
+          }
+          // Only warn if shader actually declares the sampler binding
+          else if (bindings.samplers.size > 0) {
+            console.warn(`[ralph-gpu] Sampler provided for texture '${name}' but could not find matching sampler binding in shader. Expected '${name}Sampler', '${name}_sampler', or similar.`);
+          }
+        }
+      } else {
+        // Only warn if not bound as storage texture
+        console.warn(`[ralph-gpu] Texture '${name}' provided in uniforms but not found in shader bindings.`);
+      }
+    }
+
+    // Add storage buffers
+    for (const [name, buffer] of this.storageBuffers) {
+      const storageBinding = bindings.storage.get(name);
+      if (storageBinding !== undefined) {
+        bindGroupEntries.push({
+          binding: storageBinding,
+          resource: { buffer: buffer.gpuBuffer },
+        });
+      }
+    }
+
+    // Create bind group if we have any entries
+    if (bindGroupEntries.length > 0) {
+      const userBindGroupLayout = this.pipeline.getBindGroupLayout(1);
+      return this.device.createBindGroup({
+        layout: userBindGroupLayout,
+        entries: bindGroupEntries,
+      });
+    }
+
+    return null;
   }
 
   /**
@@ -239,9 +356,10 @@ ${this.wgsl}
       passEncoder.setBindGroup(0, globalsBindGroup);
     }
 
-    // Bind user uniforms (always group 1 since shader uses @group(1))
-    if (this.bindGroup) {
-      passEncoder.setBindGroup(1, this.bindGroup);
+    // Create and bind user uniforms (group 1) with fresh texture views
+    const bindGroup = this.createBindGroup();
+    if (bindGroup) {
+      passEncoder.setBindGroup(1, bindGroup);
     }
 
     // Dispatch

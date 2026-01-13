@@ -9,6 +9,7 @@ import {
   ComputeShader,
   StorageBuffer,
   Pass,
+  Sampler,
 } from "ralph-gpu";
 
 // ============================================================================
@@ -17,7 +18,7 @@ import {
 
 // Particle system
 const NUM_PARTICLES = 12000;
-const MAX_LIFETIME = 20;
+const MAX_LIFETIME = 10;
 const TRIANGLE_RADIUS = 3;
 const VELOCITY_SCALE = 0.04;
 
@@ -26,18 +27,24 @@ const POSITION_JITTER = 0.03; // Random offset from edge position
 const INITIAL_VELOCITY_JITTER = 0.4; // Initial velocity randomness
 
 // Physics
-const SDF_EPSILON = 0.0001; // SDF gradient sampling distance
+const SDF_EPSILON = 0.01; // SDF gradient sampling distance
 const FORCE_STRENGTH = 0.13; // How strongly SDF pushes particles
-const VELOCITY_DAMPING = 0.99; // Velocity decay per frame (0-1)
+const VELOCITY_DAMPING = 0.995; // Velocity decay per frame (0-1)
 const RESPAWN_VELOCITY_JITTER = INITIAL_VELOCITY_JITTER; // Velocity randomness on respawn
+const SDF_UPDATE_INTERVAL = 0.6; // Update SDF texture once per second
 
 // Rendering
 const POINT_SIZE = 0.3;
-const FADE_DURATION = MAX_LIFETIME * 0.4; // How long the fade-out takes
+const FADE_DURATION = MAX_LIFETIME * .4; // How long the fade-out takes
+const PARTICLE_OFFSET_Y = -0.95; // Y offset for particle rendering
 
 // Postprocessing blur
-const BLUR_MAX_SAMPLES = 32;
-const BLUR_MAX_SIZE = 0.02; // Maximum blur radius in NDC
+const BLUR_MAX_SAMPLES = 16;
+const BLUR_MAX_SIZE = 0.01; // Maximum blur radius in NDC
+
+// Debug options
+const DEBUG_SDF_TEXTURE_DEFAULT = false; // Show SDF texture visualization by default
+const DEBUG_BLUR_DEFAULT = false; // Show blur size visualization by default
 
 // ============================================================================
 // Shared WGSL Code - SDF and Blur Functions
@@ -82,16 +89,18 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
     
     px -= clamp(px, -2.0 * r, 0.0);
     let len = sqrt(px * px + py * py);
-    return -len * sign(py) - 0.7;
+    return -len * sign(py);
   }
 
   fn animatedSdf(p: vec2f, r: f32, time: f32) -> f32 {
-    let sdf = triangleSdf(p, r);
+    let sdf = triangleSdf(p, r + 0.7) - 0.1;
 
     // Noise-based force modulation
-    let noisePos = vec3f(p.x * 1., p.y * 1., time * 0.01);
+    let noiseSampleScale = 1.;
+    let noisePos = vec3f(p.x * noiseSampleScale, p.y * noiseSampleScale - time * 0.1, sin(time * 1.) * 0.5 + .5);
     let noiseSample = noise3d(noisePos) * 2.;
-    let noiseScale = step(sdf, 0.) * (1. - u.focused);
+    var noiseScale = step(sdf, 0.) * (1. - u.focused);
+    noiseScale = noiseScale * pow(clamp(1. - sdf * 0.1 - 0.2, 0., 1.), 0.5);
 
     return sdf - noiseSample * noiseScale;
   }
@@ -103,7 +112,7 @@ const BLUR_CALCULATION_WGSL = /* wgsl */ `
   // One side has no blur, other side has radial blur
   fn calculateBlurSize(uv: vec2f, maxBlurSize: f32, angleRadians: f32) -> f32 {
     // Calculate distance from center (circular component)
-    let centerDist = length(uv - 0.5) * sqrt(2.0);
+    let centerDist = length(uv - 0.5) * sqrt(2.0) * 2.;
     
     // Convert UV to centered coordinates
     let centered = uv - 0.5;
@@ -162,13 +171,19 @@ export default function Page() {
   const bumpIntensityRef = useRef(0);
   const bumpProgressRef = useRef(0);
   const debugSdfRef = useRef(false);
-  const debugBlurRef = useRef(false);
+  const debugSdfTextureRef = useRef(DEBUG_SDF_TEXTURE_DEFAULT);
+  const debugBlurRef = useRef(DEBUG_BLUR_DEFAULT);
   const blurAngleRef = useRef(26);
 
   // Leva controls
   useControls({
+    debugSdfTexture: {
+      value: DEBUG_SDF_TEXTURE_DEFAULT,
+      label: "Debug SDF Texture",
+      onChange: (v) => { debugSdfTextureRef.current = v; },
+    },
     debugBlur: {
-      value: false,
+      value: DEBUG_BLUR_DEFAULT,
       label: "Debug Blur Size",
       onChange: (v) => { debugBlurRef.current = v; },
     },
@@ -199,14 +214,30 @@ export default function Page() {
     let computeBtoA: ComputeShader;
     let particleMaterial: Material;
     let debugPass: Pass;
+    let sdfTextureDebugPass: Pass;
     let blurPass: Pass;
     let blurDebugPass: Pass;
+    let sdfPass: Pass;
 
     // Render targets
     let renderTarget: ReturnType<GPUContext["target"]>;
+    let sdfTarget: ReturnType<GPUContext["target"]> | null = null;
+
+    // Custom samplers
+    let blurSampler: Sampler;
+    let sdfSampler: Sampler;
+
+    // SDF texture state
+    let needsSdfUpdate = true;
+    let currentCanvasWidth = 0;
+    let currentCanvasHeight = 0;
+    let lastSdfUpdateTime = 0;
 
     // Ping-pong state
     let pingPong = 0;
+
+    // ResizeObserver for tracking canvas size
+    let resizeObserver: ResizeObserver;
 
     async function init() {
       if (!canvasRef.current) return;
@@ -228,6 +259,7 @@ export default function Page() {
       }
 
       // Initialize particle data
+      // Note: We still use Float32Array for CPU-side initialization, but GPU will read as vec2f
       const positionArray = new Float32Array(NUM_PARTICLES * 2);
       const originalPositionArray = new Float32Array(NUM_PARTICLES * 2);
       const velocityArrayA = new Float32Array(NUM_PARTICLES * 2);
@@ -261,8 +293,8 @@ export default function Page() {
         velocityArrayB[i * 2 + 1] = velocityArrayA[i * 2 + 1];
       }
 
-      // Create storage buffers
-      positionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4); // 2 floats × 4 bytes
+      // Create storage buffers (same size, but GPU will read as structured vec2f)
+      positionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4); // vec2f array
       originalPositionBuffer = ctx.storage(NUM_PARTICLES * 2 * 4);
       velocityBufferA = ctx.storage(NUM_PARTICLES * 2 * 4);
       velocityBufferB = ctx.storage(NUM_PARTICLES * 2 * 4);
@@ -274,6 +306,40 @@ export default function Page() {
       velocityBufferA.write(velocityArrayA);
       velocityBufferB.write(velocityArrayB);
       lifetimeBuffer.write(lifetimeArray);
+
+      // Create SDF target at half resolution (must be before compute shaders)
+      const initialSdfWidth = Math.max(1, Math.floor(canvasRef.current.width / 2));
+      const initialSdfHeight = Math.max(1, Math.floor(canvasRef.current.height / 2));
+      
+      // Use 16-bit float format to properly store negative SDF values with good precision
+      sdfTarget = ctx.target(initialSdfWidth, initialSdfHeight, { format: "r16float" });
+      currentCanvasWidth = canvasRef.current.width;
+      currentCanvasHeight = canvasRef.current.height;
+      needsSdfUpdate = true;
+      
+      // Helper to resize SDF target when canvas size changes
+      function resizeSdfTarget(width: number, height: number) {
+        if (!sdfTarget) return;
+        
+        const sdfWidth = Math.max(1, Math.floor(width / 2));
+        const sdfHeight = Math.max(1, Math.floor(height / 2));
+        
+        // Use built-in resize method instead of creating new target
+        sdfTarget.resize(sdfWidth, sdfHeight);
+        
+        currentCanvasWidth = width;
+        currentCanvasHeight = height;
+        needsSdfUpdate = true;
+      }
+
+      // Create custom samplers
+      // SDF sampler with linear filtering for smooth gradient sampling
+      sdfSampler = ctx.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
 
       // Create compute shaders
       const computeShaderCode = /* wgsl */ `
@@ -287,85 +353,99 @@ export default function Page() {
           velocityDamping: f32,
           velocityScale: f32,
           maxLifetime: f32,
+          offsetY: f32,
         }
         @group(1) @binding(0) var<uniform> u: ComputeUniforms;
-        @group(1) @binding(1) var<storage, read_write> positions: array<f32>;
-        @group(1) @binding(2) var<storage, read> originalPositions: array<f32>;
-        @group(1) @binding(3) var<storage, read> velocityRead: array<f32>;
-        @group(1) @binding(4) var<storage, read_write> velocityWrite: array<f32>;
-        @group(1) @binding(5) var<storage, read_write> lifetimes: array<f32>;
+        @group(1) @binding(1) var sdfTexture: texture_2d<f32>;
+        @group(1) @binding(2) var sdfSampler: sampler;
+        @group(1) @binding(3) var<storage, read_write> positions: array<vec2f>;
+        @group(1) @binding(4) var<storage, read> originalPositions: array<vec2f>;
+        @group(1) @binding(5) var<storage, read> velocityRead: array<vec2f>;
+        @group(1) @binding(6) var<storage, read_write> velocityWrite: array<vec2f>;
+        @group(1) @binding(7) var<storage, read_write> lifetimes: array<f32>;
 
-        ${SDF_FUNCTIONS_WGSL}
+        fn hash(seed: f32) -> f32 {
+          let s = fract(seed * 0.1031);
+          let s2 = s * (s + 33.33);
+          return fract(s2 * (s2 + s2));
+        }
 
         fn randomSigned(seed: f32) -> f32 {
           return hash(seed) * 2.0 - 1.0;
         }
 
+        // Convert world position to UV coordinates for SDF texture sampling
+        fn worldToUV(worldPos: vec2f) -> vec2f {
+          // World space is centered at origin, ranging roughly [-aspect*5, aspect*5] x [-5, 5]
+          // Convert to NDC [-1, 1]
+          let ndc = worldPos / vec2f(globals.aspect * 5.0, 5.0);
+          // Convert NDC to UV [0, 1] (flip Y because texture origin is top-left)
+          let uv = ndc * vec2f(0.5, -0.5) + 0.5;
+          return uv;
+        }
+
+        // Sample SDF from pre-rendered texture
+        fn sampleSdf(worldPos: vec2f) -> f32 {
+          // Adjust for SDF texture coordinate space (subtract same offset used when rendering SDF)
+          let adjustedPos = worldPos + vec2f(0.0, u.offsetY);
+          let uv = worldToUV(adjustedPos);
+          // Read SDF directly from r16float texture (no unpacking needed!)
+          let sdf = textureSampleLevel(sdfTexture, sdfSampler, uv, 0.0).r;
+          return sdf;
+        }
+
         @compute @workgroup_size(64, 1, 1)
         fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           let index = id.x;
-          if (index >= arrayLength(&positions) / 2u) { return; }
-
-          let posIdx = index * 2u;
+          if (index >= arrayLength(&positions)) { return; }
           
-          // Read current position
-          var posX = positions[posIdx];
-          var posY = positions[posIdx + 1u];
-          let pos = vec2f(posX, posY);
-
-          // Read velocity
-          var velX = velocityRead[posIdx];
-          var velY = velocityRead[posIdx + 1u];
-
-          // Read lifetime
+          // Read current position and velocity (clean vec2f access)
+          var pos = positions[index];
+          var vel = velocityRead[index];
           var life = lifetimes[index];
 
-          // Calculate SDF gradient
-          let sdfCenter = animatedSdf(pos, u.triangleRadius, u.time);
-          let sdfRight = animatedSdf(pos + vec2f(u.sdfEpsilon, 0.0), u.triangleRadius, u.time);
-          let sdfTop = animatedSdf(pos + vec2f(0.0, u.sdfEpsilon), u.triangleRadius, u.time);
+          // Sample SDF gradient from texture (much faster than computing!)
+          let sdfCenter = sampleSdf(pos);
+          let sdfRight = sampleSdf(pos + vec2f(u.sdfEpsilon, 0.0));
+          let sdfTop = sampleSdf(pos + vec2f(0.0, u.sdfEpsilon));
 
           let gradX = (sdfRight - sdfCenter) / u.sdfEpsilon;
           let gradY = (sdfTop - sdfCenter) / u.sdfEpsilon;
+          let gradient = vec2f(gradX, gradY);
 
           let sdfSign = sign(sdfCenter);
 
           // Apply force
-          let forceX = gradX * u.forceStrength * sdfSign;
-          let forceY = gradY * u.forceStrength * sdfSign;
+          let force = gradient * u.forceStrength * sdfSign;
 
           // Update velocity with damping
-          velX *= u.velocityDamping;
-          velY *= u.velocityDamping;
-          velX += forceX;
-          velY += forceY;
+          vel *= u.velocityDamping;
+          vel += force;
 
           // Update position
-          posX += velX * u.deltaTime * u.velocityScale;
-          posY += velY * u.deltaTime * u.velocityScale;
+          pos += vel * u.deltaTime * u.velocityScale;
 
           // Update lifetime
           life += u.deltaTime;
 
           // Reset if lifetime exceeded
           if (life > u.maxLifetime) {
-            posX = originalPositions[posIdx];
-            posY = originalPositions[posIdx + 1u];
+            pos = originalPositions[index];
             
             // Random velocity on reset
             let seedX = f32(index) + u.time * 1000.0;
             let seedY = f32(index) + u.time * 1000.0 + 12345.0;
-            velX = randomSigned(seedX) * ${RESPAWN_VELOCITY_JITTER};
-            velY = randomSigned(seedY) * ${RESPAWN_VELOCITY_JITTER};
+            vel = vec2f(
+              randomSigned(seedX) * ${RESPAWN_VELOCITY_JITTER},
+              randomSigned(seedY) * ${RESPAWN_VELOCITY_JITTER}
+            );
             
             life = 0.0;
           }
 
           // Write back
-          positions[posIdx] = posX;
-          positions[posIdx + 1u] = posY;
-          velocityWrite[posIdx] = velX;
-          velocityWrite[posIdx + 1u] = velY;
+          positions[index] = pos;
+          velocityWrite[index] = vel;
           lifetimes[index] = life;
         }
       `;
@@ -380,10 +460,23 @@ export default function Page() {
         velocityDamping: { value: VELOCITY_DAMPING },
         velocityScale: { value: VELOCITY_SCALE },
         maxLifetime: { value: MAX_LIFETIME },
+        offsetY: { value: PARTICLE_OFFSET_Y },
+      };
+
+      const computeUniformsAtoB = {
+        ...computeUniforms,
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
+      };
+
+      const computeUniformsBtoA = {
+        ...computeUniforms,
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
       };
 
       computeAtoB = ctx.compute(computeShaderCode, {
-        uniforms: computeUniforms,
+        uniforms: computeUniformsAtoB,
       });
       computeAtoB.storage("positions", positionBuffer);
       computeAtoB.storage("originalPositions", originalPositionBuffer);
@@ -392,7 +485,7 @@ export default function Page() {
       computeAtoB.storage("lifetimes", lifetimeBuffer);
 
       computeBtoA = ctx.compute(computeShaderCode, {
-        uniforms: computeUniforms,
+        uniforms: computeUniformsBtoA,
       });
       computeBtoA.storage("positions", positionBuffer);
       computeBtoA.storage("originalPositions", originalPositionBuffer);
@@ -410,9 +503,11 @@ export default function Page() {
           triangleRadius: f32,
           bumpIntensity: f32,
           bumpProgress: f32,
+          maxBlurSize: f32,
+          blurAngle: f32,
         }
         @group(1) @binding(0) var<uniform> u: RenderUniforms;
-        @group(1) @binding(1) var<storage, read> positions: array<f32>;
+        @group(1) @binding(1) var<storage, read> positions: array<vec2f>;
         @group(1) @binding(2) var<storage, read> lifetimes: array<f32>;
 
         struct VertexOutput {
@@ -421,6 +516,8 @@ export default function Page() {
           @location(1) @interpolate(flat) life: f32,
           @location(2) @interpolate(flat) sdfDist: f32,
         }
+
+        ${BLUR_CALCULATION_WGSL}
 
         // Triangle SDF
         fn triangleSdf(p: vec2f, r: f32) -> f32 {
@@ -445,14 +542,11 @@ export default function Page() {
           @builtin(vertex_index) vid: u32,
           @builtin(instance_index) iid: u32
         ) -> VertexOutput {
-          // Read particle position
-          let posIdx = iid * 2u;
-          let x = positions[posIdx];
-          let y = positions[posIdx + 1u];
+          // Read particle position (clean vec2f access)
+          let pos2d = positions[iid];
           let life = lifetimes[iid];
 
           // Calculate SDF distance for bump effect
-          let pos2d = vec2f(x, y);
           let sdf = triangleSdf(pos2d, u.triangleRadius);
 
           // Quad vertices (two triangles)
@@ -464,19 +558,27 @@ export default function Page() {
           // Get vertex position for this quad corner
           let quadPos = quad[vid];
           
-          // Calculate particle size in clip space
+          // Calculate blur size at this particle's screen position
           let aspect = globals.aspect;
-          let particleSize = u.pointSize * 0.01; // Scale down to clip space
+          let worldPos = pos2d + vec2f(0.0, u.offsetY);
+          let clipPos = worldPos / vec2f(aspect * 5.0, 5.0);
+          let screenUV = clipPos * vec2f(0.5, -0.5) + 0.5;
+          
+          // Get normalized blur amount (0 to 1)
+          let blurFactor = getBlurNormalized(screenUV, u.maxBlurSize, u.blurAngle);
+          
+          // Scale particle from 1x to 2x based on blur
+          let sizeMultiplier = 1.0 + blurFactor;
+          
+          // Calculate particle size in clip space with blur scaling
+          let particleSize = u.pointSize * 0.01 * sizeMultiplier;
           let localPos = quadPos * vec2f(particleSize / aspect, particleSize);
 
-          // Apply offset and convert to clip space
-          let worldX = x;
-          let worldY = y + u.offsetY;
-          let clipX = worldX / (aspect * 5.0) + localPos.x;
-          let clipY = worldY / 5.0 + localPos.y;
+          // Final clip position
+          let finalClipPos = clipPos + localPos;
 
           var out: VertexOutput;
-          out.pos = vec4f(clipX, clipY, 0.0, 1.0);
+          out.pos = vec4f(finalClipPos, 0.0, 1.0);
           out.uv = quadPos * 0.5 + 0.5; // Convert -1..1 to 0..1
           out.life = life;
           out.sdfDist = abs(sdf);
@@ -509,13 +611,15 @@ export default function Page() {
       `;
 
       const renderUniforms = {
-        offsetY: { value: -0.95 },
+        offsetY: { value: PARTICLE_OFFSET_Y },
         pointSize: { value: POINT_SIZE },
         fadeStart: { value: MAX_LIFETIME - FADE_DURATION },
         fadeEnd: { value: MAX_LIFETIME },
         triangleRadius: { value: TRIANGLE_RADIUS },
         bumpIntensity: { value: 0.0 },
         bumpProgress: { value: 0.0 },
+        maxBlurSize: { value: BLUR_MAX_SIZE },
+        blurAngle: { value: 0 }, // Will be updated in render loop
       };
 
       particleMaterial = ctx.material(particleShaderCode, {
@@ -530,6 +634,54 @@ export default function Page() {
 
       // Create render target for postprocessing (auto-sized to canvas)
       renderTarget = ctx.target();
+
+      // Create blur sampler
+      blurSampler = ctx.createSampler({
+        magFilter: "nearest",
+        minFilter: "nearest",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+
+      // Create SDF render pass - renders SDF to texture for compute shader sampling
+      const sdfShaderCode = /* wgsl */ `
+        struct SdfUniforms {
+          time: f32,
+          triangleRadius: f32,
+          focused: f32,
+          offsetY: f32,
+        }
+        @group(1) @binding(0) var<uniform> u: SdfUniforms;
+
+        ${SDF_FUNCTIONS_WGSL}
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Convert pixel coords to world space (matching particle system scale)
+          let uv = pos.xy / globals.resolution;
+          // Map pixel coordinate to normalized device coordinates (NDC): [-1,1] with y up
+          let centered = uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
+          // Apply offsetY to match particle rendering coordinate space
+          let worldPos = centered * vec2f(globals.aspect * 5.0, 5.0) - vec2f(0.0, u.offsetY);
+
+          // Sample the animated SDF
+          let sdf = animatedSdf(worldPos, u.triangleRadius, u.time);
+
+          // Store SDF value directly in r16float texture (supports negative values!)
+          return vec4f(sdf, 0.0, 0.0, 1.0);
+        }
+      `;
+
+      const sdfUniforms = {
+        time: { value: 0.0 },
+        triangleRadius: { value: TRIANGLE_RADIUS },
+        focused: { value: 0.0 },
+        offsetY: { value: PARTICLE_OFFSET_Y },
+      };
+
+      sdfPass = ctx.pass(sdfShaderCode, {
+        uniforms: sdfUniforms,
+      });
 
       // Create debug pass for visualizing the SDF
       const debugShaderCode = /* wgsl */ `
@@ -590,6 +742,53 @@ export default function Page() {
         uniforms: debugUniforms,
       });
 
+      // Create SDF texture debug pass - visualizes the precomputed SDF texture
+      const sdfTextureDebugShaderCode = /* wgsl */ `
+        @group(1) @binding(0) var sdfTexture: texture_2d<f32>;
+        @group(1) @binding(1) var sdfSampler: sampler;
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Sample SDF texture at full resolution (upscaled from half-res)
+          let uv = pos.xy / globals.resolution;
+          let sdf = textureSample(sdfTexture, sdfSampler, uv).r;
+
+          // Visualize: negative (inside) = blue, positive (outside) = red
+          // Gradient shows distance
+          let inside = sdf < 0.0;
+          let dist = abs(sdf);
+          let normalizedDist = 1.0 - exp(-dist * 0.5);
+
+          var color: vec3f;
+          if (inside) {
+            color = vec3f(0.0, 0.2, 0.8) * (1.0 - normalizedDist);
+          } else {
+            color = vec3f(0.8, 0.2, 0.0) * (1.0 - normalizedDist);
+          }
+
+          // Add contour lines
+          let contourFreq = 0.5;
+          let contour = abs(fract(sdf * contourFreq) - 0.5) * 2.0;
+          let contourLine = smoothstep(0.9, 1.0, contour);
+          color = mix(color, vec3f(1.0), contourLine * 0.3);
+
+          // Highlight the zero crossing (edge)
+          let edge = smoothstep(0.1, 0.0, abs(sdf));
+          color = mix(color, vec3f(1.0, 1.0, 1.0), edge);
+
+          return vec4f(color, 1.0);
+        }
+      `;
+
+      const sdfTextureDebugUniforms = {
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfSampler },
+      };
+
+      sdfTextureDebugPass = ctx.pass(sdfTextureDebugShaderCode, {
+        uniforms: sdfTextureDebugUniforms,
+      });
+
       // Create blur postprocessing pass
       const blurShaderCode = /* wgsl */ `
         struct BlurUniforms {
@@ -631,44 +830,45 @@ export default function Page() {
           let hash = pixelHash(vec2u(pos.xy));
           let rotation = hash * 6.28318; // 0 to 2π
           
-          // Accumulate samples using Vogel disk with chromatic aberration
-          var colorR = vec3f(0.0);
-          var colorG = vec3f(0.0);
-          var colorB = vec3f(0.0);
+          // Accumulate samples using Vogel disk - OPTIMIZED: single sample per iteration
+          var color = vec3f(0.0);
           let sampleCount = i32(u.samples);
+          
+          // Chromatic aberration strength (applied mathematically after sampling)
+          let chromaticStrength = 1.9;
           
           for (var i = 0; i < sampleCount; i++) {
             let offset = vogelDisk(f32(i), u.samples, rotation);
             // Scale offset.x by aspect ratio to create circular disk instead of elliptical
             let aspectCorrectedOffset = vec2f(offset.x / globals.aspect, offset.y);
             
-            // Chromatic aberration: shift samples based on horizontal offset
-            // Right samples (+x) shift more for red, left samples (-x) shift more for blue
-            let chromaticShift = offset.x * 0.2; // Adjust strength of chromatic aberration
-            
+            // Single texture sample per iteration (3x faster than before)
             let sampleUV = uv + aspectCorrectedOffset * blurSize;
-            let sampleR = sampleUV + vec2f(chromaticShift, 0.0) * blurSize;
-            let sampleB = sampleUV - vec2f(chromaticShift, 0.0) * blurSize;
+            let sampledColor = textureSample(inputTex, inputSampler, sampleUV).rgb;
             
-            colorR += textureSample(inputTex, inputSampler, sampleR).rgb * 1.2;
-            colorG += textureSample(inputTex, inputSampler, sampleUV).rgb * 1.1;
-            colorB += textureSample(inputTex, inputSampler, sampleB).rgb * 1.0;
+            // Apply chromatic aberration mathematically based on sample offset
+            // Samples on the right (+x) are more red, samples on the left are more blue
+            let chromaticFactor = offset.x * chromaticStrength;
+            let channelWeights = vec3f(
+              1.2 + chromaticFactor,  // Red boosted for positive x offset
+              1.1,                     // Green neutral
+              1.0 - chromaticFactor    // Blue boosted for negative x offset
+            );
+            
+            color += sampledColor * channelWeights;
           }
           
-          // Average the samples and combine channels
-          let avgR = colorR / u.samples;
-          let avgG = colorG / u.samples;
-          let avgB = colorB / u.samples;
-          
-          // Combine: take red from avgR, green from avgG, blue from avgB
-          let finalColor = vec3f(avgR.r, avgG.g, avgB.b);
+          // Average the samples
+          let finalColor = color / u.samples;
           
           return vec4f(finalColor, 1.0);
         }
       `;
 
       const blurUniforms = {
-        inputTex: { value: renderTarget }, // Pass full RenderTarget (includes texture + sampler)
+        // Use the new sampler API - pass texture and sampler separately
+        inputTex: { value: renderTarget.texture }, // Pass just the texture
+        inputSampler: { value: blurSampler }, // Pass custom sampler
         maxBlurSize: { value: BLUR_MAX_SIZE },
         samples: { value: BLUR_MAX_SAMPLES },
         angle: { value: 0 }, // Will be updated in render loop
@@ -699,17 +899,11 @@ export default function Page() {
           // Color scheme: Blue (no blur) → Red (max blur)
           var color = vec3f(normalized, 0.0, 1.0 - normalized);
           
-          // Add grid lines to show blur size contours
-          let gridFreq = 10.0;
-          let grid = fract(normalized * gridFreq);
-          let gridLine = smoothstep(0.05, 0.1, grid) * smoothstep(0.95, 0.9, grid);
-          color = mix(vec3f(1.0), color, gridLine);
-          
-          // Add a scale bar at the bottom
-          if (uv.y > 0.9) {
-            let barPos = uv.x;
-            color = vec3f(barPos, 0.0, 1.0 - barPos);
-          }
+          // Add white lines at 0 and 1 boundaries
+          let edgeThickness = 0.01;
+          let edge0 = smoothstep(edgeThickness, 0.0, normalized);
+          let edge1 = smoothstep(1.0 - edgeThickness, 1.0, normalized);
+          color = mix(color, vec3f(1.0), max(edge0, edge1));
           
           return vec4f(color, 1.0);
         }
@@ -724,6 +918,22 @@ export default function Page() {
         uniforms: blurDebugUniforms,
       });
 
+      // Add ResizeObserver to track canvas size changes
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const canvas = entry.target as HTMLCanvasElement;
+          const width = canvas.width;
+          const height = canvas.height;
+          
+          // Check if size changed (ignoring DPR as requested)
+          if (width !== currentCanvasWidth || height !== currentCanvasHeight) {
+            resizeSdfTarget(width, height);
+            // Texture references remain valid after resize - no need to update uniforms!
+          }
+        }
+      });
+      resizeObserver.observe(canvasRef.current);
+
       // Render loop
       let lastTime = performance.now();
       let totalTime = 0;
@@ -735,6 +945,22 @@ export default function Page() {
         const deltaTime = Math.min((now - lastTime) / 1000, 0.07);
         lastTime = now;
         totalTime += deltaTime;
+
+        // Render SDF texture only once per second OR when size changed
+        // This saves GPU cycles since the SDF animates slowly
+        const timeSinceLastSdfUpdate = totalTime - lastSdfUpdateTime;
+        const shouldUpdateSdf = needsSdfUpdate || timeSinceLastSdfUpdate >= SDF_UPDATE_INTERVAL;
+        
+        if (sdfTarget && shouldUpdateSdf) {
+          sdfUniforms.time.value = totalTime;
+          sdfUniforms.focused.value = focusedRef.current;
+          
+          ctx.setTarget(sdfTarget);
+          sdfPass.draw();
+          
+          lastSdfUpdateTime = totalTime;
+          needsSdfUpdate = false;
+        }
 
         // Update compute uniforms
         computeUniforms.deltaTime.value = deltaTime;
@@ -761,27 +987,37 @@ export default function Page() {
         const angleRadians = (blurAngleRef.current * Math.PI) / 180;
         blurUniforms.angle.value = angleRadians;
         blurDebugUniforms.angle.value = angleRadians;
+        renderUniforms.blurAngle.value = angleRadians;
 
         if (debugSdfRef.current) {
           // SDF Debug mode: render the SDF visualization directly to canvas
           ctx.setTarget(null);
-          ctx.clear(null, [0, 0, 0, 1]);
           debugPass.draw();
+        } else if (debugSdfTextureRef.current) {
+          // SDF Texture Debug mode: visualize the precomputed SDF texture with particles on top
+          ctx.setTarget(null);
+          ctx.clear()
+          ctx.autoClear = false;
+          
+          // Step 1: Draw SDF debug visualization
+          sdfTextureDebugPass.draw();
+          
+          // Step 2: Draw particles on top (without clearing!)
+          particleMaterial.draw();
+
+          ctx.autoClear = true;
         } else if (debugBlurRef.current) {
           // Blur Debug mode: visualize blur size calculation
           ctx.setTarget(null);
-          ctx.clear(null, [0, 0, 0, 1]);
           blurDebugPass.draw();
         } else {
           // Normal mode: render particles to target, then apply blur
           // Step 1: Render particles to render target
           ctx.setTarget(renderTarget);
-          ctx.clear(renderTarget, [0, 0, 0, 1]);
           particleMaterial.draw();
 
           // Step 2: Apply blur postprocessing to canvas
           ctx.setTarget(null);
-          ctx.clear(null, [0, 0, 0, 1]);
           blurPass.draw();
         }
 
@@ -795,6 +1031,9 @@ export default function Page() {
     return () => {
       disposed = true;
       cancelAnimationFrame(animationId);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       ctx?.dispose();
     };
   }, []);
