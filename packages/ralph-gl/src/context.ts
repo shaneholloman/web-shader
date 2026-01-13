@@ -49,10 +49,76 @@ export class GLContext {
   /** Currently active render target (null = canvas) */
   private _currentTarget: RenderTarget | null = null
   
+  /** Auto-resize observer */
+  private _resizeObserver: ResizeObserver | null = null
+  
+  /** Options used to create this context */
+  private _options: GLContextOptions
+  
   constructor(gl: WebGL2RenderingContext, canvas: HTMLCanvasElement, options?: GLContextOptions) {
     this.gl = gl
     this.canvas = canvas
-    // TODO: Initialize context with options
+    this._options = options ?? {}
+    
+    // Set device pixel ratio
+    this.dpr = options?.dpr ?? (typeof window !== 'undefined' ? window.devicePixelRatio : 1)
+    
+    // Initialize canvas size
+    this.updateSize()
+    
+    // Setup auto-resize if enabled
+    if (options?.autoResize !== false) {
+      this.setupAutoResize()
+    }
+  }
+  
+  /**
+   * Update canvas size from current dimensions
+   */
+  private updateSize(): void {
+    const canvas = this.canvas
+    const dpr = this.dpr
+    
+    // Get CSS size
+    const cssWidth = canvas.clientWidth || canvas.width
+    const cssHeight = canvas.clientHeight || canvas.height
+    
+    // Set canvas buffer size with DPR
+    const width = Math.floor(cssWidth * dpr)
+    const height = Math.floor(cssHeight * dpr)
+    
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width
+      canvas.height = height
+    }
+    
+    this.width = width
+    this.height = height
+    
+    // Update viewport if rendering to canvas
+    if (!this._currentTarget) {
+      this.gl.viewport(0, 0, width, height)
+    }
+  }
+  
+  /**
+   * Setup auto-resize observer
+   */
+  private setupAutoResize(): void {
+    if (typeof ResizeObserver === 'undefined') {
+      // Fallback to window resize for older browsers
+      if (typeof window !== 'undefined') {
+        const handleResize = () => this.updateSize()
+        window.addEventListener('resize', handleResize)
+      }
+      return
+    }
+    
+    this._resizeObserver = new ResizeObserver(() => {
+      this.updateSize()
+    })
+    
+    this._resizeObserver.observe(this.canvas)
   }
   
   /**
@@ -128,21 +194,36 @@ export class GLContext {
    * Clear the current render target
    */
   clear(color?: [number, number, number, number]): void {
-    // TODO: Implement clear
+    const gl = this.gl
+    const [r, g, b, a] = color ?? [0, 0, 0, 1]
+    gl.clearColor(r, g, b, a)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
   }
   
   /**
    * Resize the canvas
    */
   resize(width: number, height: number): void {
-    // TODO: Implement resize
+    this.canvas.width = width
+    this.canvas.height = height
+    this.width = width
+    this.height = height
+    
+    // Update viewport if rendering to canvas
+    if (!this._currentTarget) {
+      this.gl.viewport(0, 0, width, height)
+    }
   }
   
   /**
    * Clean up all WebGL resources
    */
   dispose(): void {
-    // TODO: Implement cleanup
+    // Clean up resize observer
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect()
+      this._resizeObserver = null
+    }
   }
 }
 
