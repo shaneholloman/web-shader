@@ -29,9 +29,9 @@ const INITIAL_VELOCITY_JITTER = 0.4; // Initial velocity randomness
 // Physics
 const SDF_EPSILON = 0.01; // SDF gradient sampling distance
 const FORCE_STRENGTH = 0.13; // How strongly SDF pushes particles
-const VELOCITY_DAMPING = 0.99; // Velocity decay per frame (0-1)
+const VELOCITY_DAMPING = 0.995; // Velocity decay per frame (0-1)
 const RESPAWN_VELOCITY_JITTER = INITIAL_VELOCITY_JITTER; // Velocity randomness on respawn
-const SDF_UPDATE_INTERVAL = 0.1; // Update SDF texture once per second
+const SDF_UPDATE_INTERVAL = 0.6; // Update SDF texture once per second
 
 // Rendering
 const POINT_SIZE = 0.3;
