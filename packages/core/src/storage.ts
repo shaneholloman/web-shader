@@ -2,6 +2,10 @@
  * Storage buffer for GPU compute operations
  */
 
+import type { GPUContext } from "./context"; // Need to import GPUContext type
+import { generateEventId } from "./events";
+import type { MemoryEvent } from "./events";
+
 /**
  * Storage buffer class
  */
@@ -9,10 +13,12 @@ export class StorageBuffer {
   private device: GPUDevice;
   private buffer: GPUBuffer;
   private _byteSize: number;
+  private context?: GPUContext; // Add context property
 
-  constructor(device: GPUDevice, byteSize: number) {
+  constructor(device: GPUDevice, byteSize: number, context?: GPUContext) {
     this.device = device;
     this._byteSize = byteSize;
+    this.context = context; // Store context
 
     // Create GPU buffer with INDEX usage to support index buffer operations
     this.buffer = device.createBuffer({
@@ -23,6 +29,18 @@ export class StorageBuffer {
         GPUBufferUsage.COPY_SRC |
         GPUBufferUsage.INDEX,
     });
+
+    if (this.context) {
+      const allocateEvent: MemoryEvent = {
+        type: "memory",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        resourceType: "buffer",
+        size: byteSize,
+        action: "allocate",
+      };
+      this.context.emitEvent(allocateEvent);
+    }
   }
 
   /**
@@ -62,6 +80,17 @@ export class StorageBuffer {
    * Dispose the buffer
    */
   dispose(): void {
+    if (this.context) {
+      const freeEvent: MemoryEvent = {
+        type: "memory",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        resourceType: "buffer",
+        size: this._byteSize,
+        action: "free",
+      };
+      this.context.emitEvent(freeEvent);
+    }
     this.buffer.destroy();
   }
 }

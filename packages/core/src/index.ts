@@ -17,6 +17,8 @@ export { MultiRenderTarget } from "./mrt";
 export { StorageBuffer } from "./storage";
 export { Particles } from "./particles";
 export { Sampler } from "./sampler";
+export { EventEmitter } from "./event-emitter";
+export { Profiler } from "./profiler";
 
 // Errors
 export {
@@ -50,6 +52,33 @@ export type {
 } from "./types";
 
 export type { SamplerDescriptor } from "./sampler";
+
+export type {
+  GPUEvent,
+  DrawEvent,
+  ComputeEvent,
+  ShaderCompileEvent,
+  MemoryEvent,
+  TargetEvent,
+  PipelineEvent,
+  FrameEvent,
+  GPUTimingEvent,
+  RalphGPUEvent,
+  EventType,
+} from "./events";
+
+export type {
+  EventListener,
+  EventEmitterOptions,
+} from "./event-emitter";
+
+export type {
+  ProfilerRegion,
+  RegionSummary,
+  FrameProfile,
+  FrameStats,
+  ProfilerOptions,
+} from "./profiler";
 
 /**
  * Library version

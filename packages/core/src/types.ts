@@ -4,6 +4,7 @@
 
 import type { StorageBuffer } from "./storage";
 import type { Sampler } from "./sampler";
+import type { EventType } from "./events"; // Import EventType
 
 /**
  * Texture format options
@@ -87,7 +88,7 @@ export interface RenderTargetOptions {
  */
 export interface GPUContextOptions {
   /** 
-   * Device pixel ratio for high-DPI displays
+   * Device pixel ratio for high-DPR displays
    * - number: Fixed DPR (overrides device DPR when autoResize enabled)
    * - [min, max]: Clamp device DPR to this range when autoResize enabled
    * - default: Math.min(devicePixelRatio, 2)
@@ -97,6 +98,13 @@ export interface GPUContextOptions {
   debug?: boolean;
   /** Automatically resize canvas to match display size using ResizeObserver (default: false) */
   autoResize?: boolean;
+  /** RalphGPU Event System options */
+  events?: {
+    enabled?: boolean;      // Enable event system (default: false)
+    types?: EventType[];       // Opt-in event types (e.g., ["draw", "compute"])
+    historySize?: number;   // Max events to keep (default: 1000)
+    enableGPUTiming?: boolean; // Use timestamp queries (default: false)
+  };
 }
 
 /**
@@ -116,11 +124,11 @@ export interface Uniforms {
 /**
  * Simple uniform value types - for auto-generation mode
  */
-export type SimpleUniformValue = 
-  | number 
-  | boolean 
-  | [number, number] 
-  | [number, number, number] 
+export type SimpleUniformValue =
+  | number
+  | boolean
+  | [number, number]
+  | [number, number, number]
   | [number, number, number, number]
   | { texture: GPUTexture; sampler?: GPUSampler | Sampler }
   | GPUTexture
@@ -196,11 +204,7 @@ export interface GlobalUniforms {
  * User provides full shader control - no built-in colors, shapes, or assumptions about data layout
  */
 export interface ParticlesOptions {
-  /** Full WGSL shader with vertex and fragment functions. 
-   * Built-in helpers available: quadOffset(vid), quadUV(vid) */
   shader: string;
-  /** Size of the particle storage buffer in bytes */
   bufferSize: number;
-  /** Blend mode (default: "alpha") */
   blend?: BlendMode | BlendConfig;
 }
