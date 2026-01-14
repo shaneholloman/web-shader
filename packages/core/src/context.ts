@@ -343,11 +343,6 @@ export class GPUContext {
       this.globals.aspect = this._width / this._height;
     }
 
-    // DEBUG: Log resolution for first few frames
-    if (this._frame < 5) {
-      console.log(`[GPUContext] Frame ${this._frame}: resolution=${this.globals.resolution[0]}x${this.globals.resolution[1]}, target=${this.currentTarget ? 'FBO' : 'screen'}`);
-    }
-
     updateGlobalsBuffer(this.device, this.globalsBuffer, this.globals);
   }
 
