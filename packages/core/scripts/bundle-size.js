@@ -12,6 +12,7 @@ const { gzipSync, brotliCompressSync } = require('zlib');
 
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 const README_PATH = path.join(__dirname, '..', 'README.md');
+const DOCS_JSON_PATH = path.join(__dirname, '..', '..', '..', 'apps', 'docs', 'public', 'bundle-size.json');
 
 // ANSI colors for terminal output
 const colors = {
@@ -169,19 +170,33 @@ function main() {
   
   console.log(`\n${colors.dim}Total (all formats): ${formatBytes(totalRaw)} raw, ${formatBytes(totalGzip)} gzip${colors.reset}`);
   
-  // Output machine-readable format for CI
+  // Find ESM bundle for the primary size
+  const esmSize = sizes.find(s => s.file === 'index.mjs');
+  const gzipKb = esmSize ? (esmSize.gzip / 1024).toFixed(1) : '?';
+  
+  // Output JSON for docs app (always)
+  const jsonOutput = {
+    timestamp: new Date().toISOString(),
+    gzipKb: parseFloat(gzipKb),
+    gzipDisplay: `~${Math.round(parseFloat(gzipKb))}kB`,
+    bundles: sizes.reduce((acc, s) => {
+      acc[s.file] = { raw: s.raw, gzip: s.gzip, brotli: s.brotli };
+      return acc;
+    }, {}),
+  };
+  
+  // Write to docs app public folder
+  const docsDir = path.dirname(DOCS_JSON_PATH);
+  if (fs.existsSync(docsDir)) {
+    fs.writeFileSync(DOCS_JSON_PATH, JSON.stringify(jsonOutput, null, 2));
+    console.log(`\n${colors.green}✓ Updated docs/public/bundle-size.json${colors.reset}`);
+  }
+  
+  // Also write to dist for CI if requested
   if (process.env.CI || process.argv.includes('--json')) {
-    const jsonOutput = {
-      timestamp: new Date().toISOString(),
-      bundles: sizes.reduce((acc, s) => {
-        acc[s.file] = { raw: s.raw, gzip: s.gzip, brotli: s.brotli };
-        return acc;
-      }, {}),
-    };
-    
     const jsonPath = path.join(DIST_DIR, 'bundle-size.json');
     fs.writeFileSync(jsonPath, JSON.stringify(jsonOutput, null, 2));
-    console.log(`\n${colors.dim}JSON output written to dist/bundle-size.json${colors.reset}`);
+    console.log(`${colors.dim}JSON output written to dist/bundle-size.json${colors.reset}`);
   }
   
   if (updateReadmeFlag) {
