@@ -269,6 +269,7 @@ Include relevant rules in your LoopAgent configuration:
 3. **Run in headless mode** for reliability: `headless: true`
 
 **Examples of tasks that REQUIRE browser validation:**
+
 - Creating example pages (like `debug-profiler/page.tsx`)
 - Modifying UI components
 - Adding visual features or effects
