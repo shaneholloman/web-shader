@@ -104,12 +104,22 @@ export class GPUContext {
       // Setup ResizeObserver to track canvas size changes
       this.resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
-          // Use contentBoxSize to get accurate CSS dimensions without triggering feedback loop
+          // Get CSS dimensions - prefer contentBoxSize but fall back to contentRect for older browsers
+          let cssWidth: number;
+          let cssHeight: number;
+          
           const contentBoxSize = entry.contentBoxSize?.[0];
           if (contentBoxSize) {
-            const cssWidth = contentBoxSize.inlineSize;
-            const cssHeight = contentBoxSize.blockSize;
-            
+            // Modern browsers: use contentBoxSize for accurate dimensions
+            cssWidth = contentBoxSize.inlineSize;
+            cssHeight = contentBoxSize.blockSize;
+          } else {
+            // Fallback for older browsers: use contentRect
+            cssWidth = entry.contentRect.width;
+            cssHeight = entry.contentRect.height;
+          }
+          
+          if (cssWidth > 0 && cssHeight > 0) {
             // Recalculate effective DPR
             this._dpr = this.calculateEffectiveDpr();
             

@@ -719,8 +719,8 @@ try {
 
 | Format | Raw | Gzip | Brotli |
 |--------|-----|------|--------|
-| index.js | 43.15 kB | 10.78 kB | 9.64 kB |
-| index.mjs | 42.64 kB | 10.59 kB | 9.46 kB |
+| index.js | 43.21 kB | 10.81 kB | 9.65 kB |
+| index.mjs | 42.70 kB | 10.61 kB | 9.49 kB |
 
 > 📦 **~10.6 kB** gzipped (ESM)
 
