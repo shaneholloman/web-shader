@@ -84,6 +84,20 @@ export function teardown(): void {
 }
 
 /**
+ * Wait for the browser to present at least one frame.
+ * Useful before readPixels to let GPU work finish.
+ */
+export async function waitForFrame(frames = 2): Promise<void> {
+  for (let i = 0; i < frames; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+  const device = (currentContext as any)?.device;
+  if (device?.queue?.onSubmittedWorkDone) {
+    await device.queue.onSubmittedWorkDone();
+  }
+}
+
+/**
  * Check if a pixel color is near an expected color
  */
 export function isColorNear(

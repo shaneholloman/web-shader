@@ -65,6 +65,7 @@ export class Pass {
   private globalsBuffer: GPUBuffer;
   private blendMode: PassOptions["blend"];
   private context: import("./context").GPUContext;
+  private usesGlobals: boolean;
 
   constructor(
     device: GPUDevice,
@@ -79,6 +80,9 @@ export class Pass {
     this.globalsBuffer = globalsBuffer;
     this.blendMode = options.blend;
     this.context = context;
+    
+    // Detect if shader uses globals (references globals. anywhere)
+    this.usesGlobals = /\bglobals\.\w+/.test(fragmentWGSL);
 
     // Detect which mode to use
     if (simpleUniforms && !hasManualBindings(fragmentWGSL)) {
@@ -154,6 +158,7 @@ export class Pass {
     }
 
     // Create fullscreen quad vertex shader
+    // Always include globals to maintain bind group layout stability
     const vertexWGSL = `
 ${getGlobalsWGSL()}
 
@@ -178,7 +183,7 @@ fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
 }
 `;
 
-    // Prepend globals to fragment shader
+    // Always prepend globals to fragment shader for bind group layout stability
     const fullFragmentWGSL = `
 ${getGlobalsWGSL()}
 ${this.fragmentWGSL}
@@ -321,17 +326,19 @@ ${this.fragmentWGSL}
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(pipeline);
 
-    // Bind globals (group 0) - need to recreate this each time
-    const globalsBindGroup = this.device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        {
-          binding: 0,
-          resource: { buffer: this.globalsBuffer },
-        },
-      ],
-    });
-    passEncoder.setBindGroup(0, globalsBindGroup);
+    // Bind globals (group 0) only if shader uses them
+    if (this.usesGlobals) {
+      const globalsBindGroup = this.device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+          {
+            binding: 0,
+            resource: { buffer: this.globalsBuffer },
+          },
+        ],
+      });
+      passEncoder.setBindGroup(0, globalsBindGroup);
+    }
 
     // Bind user uniforms (group 1)
     // Use generated bindings for simple mode, parse for manual mode

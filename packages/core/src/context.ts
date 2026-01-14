@@ -821,7 +821,22 @@ export class GPUContext {
       // MRT - use first target for now (should handle properly)
       const views = this.currentTarget.getViews();
       view = views[0];
-      format = this.format; // TODO: Get format from MRT
+      // Get format from the first MRT target
+      const firstTarget = this.currentTarget.get(
+        Array.from((this.currentTarget as any).targets.keys())[0] as string
+      );
+      if (firstTarget) {
+        const formatMap: Record<string, GPUTextureFormat> = {
+          "rgba8unorm": "rgba8unorm",
+          "rgba16float": "rgba16float",
+          "r16float": "r16float",
+          "rg16float": "rg16float",
+          "r32float": "r32float",
+        };
+        format = formatMap[firstTarget.format] || "rgba8unorm";
+      } else {
+        format = "rgba8unorm";
+      }
     }
 
     const renderPassDescriptor: GPURenderPassDescriptor = {

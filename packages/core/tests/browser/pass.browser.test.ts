@@ -2,13 +2,15 @@ import { test, expect } from '@playwright/test';
 
 test.describe('GPUPass', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/tests/browser/index.html');
+    await page.goto('/index.html');
   });
 
   test('should render a solid color', async ({ page }) => {
-    const result = await page.evaluate(async () => {
-      const { setupTest, readPixels, expectPixelNear, teardown } = (window as any).RalphTestUtils;
+    await page.evaluate(async () => {
+      const { setupTest, waitForFrame } = (window as any).RalphTestUtils;
       const { context } = await setupTest(32, 32);
+      const target = context.target(32, 32);
+      (window as any).__testTarget = target;
       
       const pass = context.pass(/* wgsl */ `
         @fragment
@@ -17,9 +19,17 @@ test.describe('GPUPass', () => {
         }
       `);
       
+      context.setTarget(target);
       pass.draw();
-      
-      const data = await readPixels(0, 0, 1, 1);
+      await waitForFrame();
+    });
+
+    await page.screenshot();
+
+    const result = await page.evaluate(async () => {
+      const { expectPixelNear, teardown } = (window as any).RalphTestUtils;
+      const target = (window as any).__testTarget;
+      const data = await target.readPixels(0, 0, 1, 1);
       expectPixelNear(data, [255, 0, 0, 255], 3);
       teardown();
       return true;

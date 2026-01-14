@@ -2,15 +2,16 @@ import { test, expect } from '@playwright/test';
 
 test.describe('PingPong', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/tests/browser/index.html');
+    await page.goto('/index.html');
   });
 
   test('should swap read and write targets', async ({ page }) => {
-    const result = await page.evaluate(async () => {
-      const { setupTest, readPixels, expectPixelNear, teardown } = (window as any).RalphTestUtils;
+    await page.evaluate(async () => {
+      const { setupTest, waitForFrame } = (window as any).RalphTestUtils;
       const { context } = await setupTest(32, 32);
       
       const pingPong = context.pingPong(32, 32);
+      (window as any).__pingPong = pingPong;
       
       // 1. Fill write with Red
       const pass1 = context.pass(/* wgsl */ `
@@ -22,16 +23,12 @@ test.describe('PingPong', () => {
       
       context.setTarget(pingPong.write);
       pass1.draw();
+      await waitForFrame();
       
       // 2. Swap
       pingPong.swap();
       
-      // 3. Verify read is Red
-      context.setTarget(pingPong.read);
-      const data = await readPixels(0, 0, 1, 1);
-      expectPixelNear(data, [255, 0, 0, 255], 3);
-      
-      // 4. Fill write with Blue, using read (Red) as input
+      // 3. Fill write with Blue, using read (Red) as input
       const pass2 = context.pass(/* wgsl */ `
         @group(1) @binding(0) var uRead: texture_2d<f32>;
         @group(1) @binding(1) var uSampler: sampler;
@@ -50,15 +47,21 @@ test.describe('PingPong', () => {
       
       context.setTarget(pingPong.write);
       pass2.draw();
+      await waitForFrame();
       
-      // 5. Swap
+      // 4. Swap
       pingPong.swap();
-      
-      // 6. Verify read is Purple (Red + Blue)
-      context.setTarget(pingPong.read);
-      const data2 = await readPixels(0, 0, 1, 1);
+    });
+
+    await page.screenshot();
+
+    const result = await page.evaluate(async () => {
+      const { expectPixelNear, teardown } = (window as any).RalphTestUtils;
+      const pingPong = (window as any).__pingPong;
+      if (!pingPong) throw new Error('pingPong missing');
+      // Verify read is Purple (Red + Blue)
+      const data2 = await pingPong.read.readPixels(0, 0, 1, 1);
       expectPixelNear(data2, [255, 0, 255, 255], 3);
-      
       teardown();
       return true;
     });

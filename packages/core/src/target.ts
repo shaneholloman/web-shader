@@ -271,8 +271,9 @@ export class RenderTarget {
                           this._format === "rgba16float" ? 8 :
                           this._format === "r32float" ? 4 : 4;
     
-    const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-    const bufferSize = bytesPerRow * height;
+    const actualBytesPerRow = width * bytesPerPixel;
+    const alignedBytesPerRow = Math.ceil(actualBytesPerRow / 256) * 256;
+    const bufferSize = alignedBytesPerRow * height;
 
     const buffer = this.device.createBuffer({
       size: bufferSize,
@@ -282,7 +283,7 @@ export class RenderTarget {
     const encoder = this.device.createCommandEncoder();
     encoder.copyTextureToBuffer(
       { texture: this._gpuTexture, origin: { x, y, z: 0 } },
-      { buffer, bytesPerRow },
+      { buffer, bytesPerRow: alignedBytesPerRow },
       { width, height, depthOrArrayLayers: 1 }
     );
     this.device.queue.submit([encoder.finish()]);
@@ -292,14 +293,36 @@ export class RenderTarget {
     
     // Create appropriate typed array based on format
     const isFloat = this._format !== "rgba8unorm";
-    const data = isFloat 
-      ? new Float32Array(arrayBuffer.slice(0))
-      : new Uint8Array(arrayBuffer.slice(0));
+    
+    // If there's no padding, return the data directly
+    if (alignedBytesPerRow === actualBytesPerRow) {
+      const data = isFloat 
+        ? new Float32Array(arrayBuffer.slice(0))
+        : new Uint8Array(arrayBuffer.slice(0));
+      buffer.unmap();
+      buffer.destroy();
+      return data;
+    }
+    
+    // Strip out the row padding to return tightly packed pixel data
+    const paddedData = new Uint8Array(arrayBuffer);
+    const packedSize = actualBytesPerRow * height;
+    const packedData = new Uint8Array(packedSize);
+    
+    for (let row = 0; row < height; row++) {
+      const srcOffset = row * alignedBytesPerRow;
+      const dstOffset = row * actualBytesPerRow;
+      packedData.set(paddedData.subarray(srcOffset, srcOffset + actualBytesPerRow), dstOffset);
+    }
     
     buffer.unmap();
     buffer.destroy();
 
-    return data;
+    // Return appropriate typed array
+    if (isFloat) {
+      return new Float32Array(packedData.buffer);
+    }
+    return packedData;
   }
 
   /**

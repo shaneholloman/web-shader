@@ -2,13 +2,15 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Sampler', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/tests/browser/index.html');
+    await page.goto('/index.html');
   });
 
   test('should sample texture with nearest filter', async ({ page }) => {
-    const result = await page.evaluate(async () => {
-      const { setupTest, readPixels, expectPixelNear, teardown } = (window as any).RalphTestUtils;
+    await page.evaluate(async () => {
+      const { setupTest, waitForFrame } = (window as any).RalphTestUtils;
       const { context } = await setupTest(4, 4);
+      const outputTarget = context.target(4, 4);
+      (window as any).__testTarget = outputTarget;
       
       // 1. Create a 2x2 texture with 4 colors
       const texture = context.target(2, 2);
@@ -27,6 +29,7 @@ test.describe('Sampler', () => {
       `);
       context.setTarget(texture);
       fillPass.draw();
+      await waitForFrame();
       
       // 2. Create a sampler with nearest filtering
       const nearestSampler = context.createSampler({
@@ -51,12 +54,19 @@ test.describe('Sampler', () => {
         }
       });
       
-      context.setTarget(null); // Render to canvas (4x4)
+      context.setTarget(outputTarget); // Render to target (4x4)
       renderPass.draw();
-      
-      // 4. Verify pixels in the 4x4 canvas
+      await waitForFrame();
+    });
+
+    await page.screenshot();
+
+    const result = await page.evaluate(async () => {
+      const { expectPixelNear, teardown } = (window as any).RalphTestUtils;
+      const outputTarget = (window as any).__testTarget;
+      // 4. Verify pixels in the 4x4 target
       // With nearest filter, 2x2 regions should have the same color
-      const data = await readPixels(0, 0, 4, 4);
+      const data = await outputTarget.readPixels(0, 0, 4, 4);
       
       // Top-left 2x2 should be Red [255, 0, 0, 255]
       expectPixelNear(data, [255, 0, 0, 255], 3, 0); // (0,0)
@@ -84,9 +94,11 @@ test.describe('Sampler', () => {
   });
 
   test('should sample texture with linear filter', async ({ page }) => {
-    const result = await page.evaluate(async () => {
-      const { setupTest, readPixels, expectPixelNear, teardown } = (window as any).RalphTestUtils;
+    await page.evaluate(async () => {
+      const { setupTest, waitForFrame } = (window as any).RalphTestUtils;
       const { context } = await setupTest(2, 1);
+      const outputTarget = context.target(2, 1);
+      (window as any).__testTarget = outputTarget;
       
       // 1. Create a 2x1 texture: Left is Red, Right is Blue
       const texture = context.target(2, 1);
@@ -99,6 +111,7 @@ test.describe('Sampler', () => {
       `);
       context.setTarget(texture);
       fillPass.draw();
+      await waitForFrame();
       
       // 2. Create a linear sampler
       const linearSampler = context.createSampler({
@@ -127,10 +140,17 @@ test.describe('Sampler', () => {
         }
       });
       
-      context.setTarget(null); // 2x1 canvas
+      context.setTarget(outputTarget); // 2x1 target
       renderPass.draw();
-      
-      const data = await readPixels(0, 0, 2, 1);
+      await waitForFrame();
+    });
+
+    await page.screenshot();
+
+    const result = await page.evaluate(async () => {
+      const { expectPixelNear, teardown } = (window as any).RalphTestUtils;
+      const outputTarget = (window as any).__testTarget;
+      const data = await outputTarget.readPixels(0, 0, 2, 1);
       // Both pixels should be Purple [127, 0, 127, 255] (approx)
       expectPixelNear(data, [127, 0, 127, 255], 5, 0);
       expectPixelNear(data, [127, 0, 127, 255], 5, 1);

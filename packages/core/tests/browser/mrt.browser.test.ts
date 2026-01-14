@@ -2,12 +2,12 @@ import { test, expect } from '@playwright/test';
 
 test.describe('MRT (Multiple Render Targets)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/tests/browser/index.html');
+    await page.goto('/index.html');
   });
 
   test('should write to multiple targets', async ({ page }) => {
-    const result = await page.evaluate(async () => {
-      const { setupTest, expectPixelNear, teardown } = (window as any).RalphTestUtils;
+    await page.evaluate(async () => {
+      const { setupTest, waitForFrame } = (window as any).RalphTestUtils;
       const { context } = await setupTest(8, 8);
       
       const mrt = context.mrt({
@@ -29,23 +29,32 @@ test.describe('MRT (Multiple Render Targets)', () => {
         }
       `);
       
+      const target0 = mrt.get('color0');
+      const target1 = mrt.get('color1');
+      if (!target0 || !target1) throw new Error('mrt targets missing');
+      (window as any).__mrtTargets = { target0, target1 };
+
       // Pass 1: Draw to MRT (which currently defaults to target 0)
       context.setTarget(mrt);
       passRed.draw();
-      
-      // Check first target
-      const target0 = mrt.get('color0');
-      if (!target0) throw new Error('target0 is undefined');
-      const data0 = await target0.readPixels(0, 0, 1, 1);
-      expectPixelNear(data0, [255, 0, 0, 255], 3);
+      await waitForFrame();
       
       // Pass 2: Draw directly to target1
-      const target1 = mrt.get('color1');
-      if (!target1) throw new Error('target1 is undefined');
       context.setTarget(target1);
       passGreen.draw();
+      await waitForFrame();
+    });
 
-      // Check second target
+    await page.screenshot();
+
+    const result = await page.evaluate(async () => {
+      const { expectPixelNear, teardown } = (window as any).RalphTestUtils;
+      const { target0, target1 } = (window as any).__mrtTargets || {};
+      if (!target0 || !target1) throw new Error('mrt targets missing');
+
+      const data0 = await target0.readPixels(0, 0, 1, 1);
+      expectPixelNear(data0, [255, 0, 0, 255], 3);
+
       const data1 = await target1.readPixels(0, 0, 1, 1);
       expectPixelNear(data1, [0, 255, 0, 255], 3);
       
