@@ -13,6 +13,8 @@ import {
   validateBindings,
 } from "./uniforms";
 import type { StorageBuffer } from "./storage";
+import { generateEventId } from "./events"; // Import generateEventId
+import type { ComputeEvent } from "./events"; // Import ComputeEvent type
 
 /**
  * Compute shader class
@@ -29,18 +31,21 @@ export class ComputeShader {
   private workgroupSize: [number, number, number];
   private needsRebuild = true;
   private usesGlobals = false;
+  private context?: import("./context").GPUContext; // Add context property
 
   constructor(
     device: GPUDevice,
     wgsl: string,
     globalsBuffer: GPUBuffer,
+    context?: import("./context").GPUContext, // Add context parameter
     options: ComputeOptions = {}
   ) {
     this.device = device;
     this.wgsl = wgsl;
     this._uniforms = options.uniforms || {};
     this.globalsBuffer = globalsBuffer;
-    
+    this.context = context; // Store context
+
     const wg = options.workgroupSize || [1];
     this.workgroupSize = [
       wg[0] || 1,
@@ -317,6 +322,20 @@ ${this.wgsl}
    * Dispatch compute shader
    */
   dispatch(x: number, y = 1, z = 1): void {
+    // Emit compute:start event
+    if (this.context) {
+      const startEvent: ComputeEvent = {
+        type: "compute",
+        phase: "start",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        workgroups: [x, y, z],
+        workgroupSize: this.workgroupSize,
+        totalInvocations: x * y * z * this.workgroupSize[0] * this.workgroupSize[1] * this.workgroupSize[2],
+      };
+      this.context.emitEvent(startEvent);
+    }
+
     // Build pipeline if needed
     if (!this.pipeline || this.needsRebuild) {
       this.buildPipeline();
@@ -368,6 +387,20 @@ ${this.wgsl}
 
     // Submit
     this.device.queue.submit([commandEncoder.finish()]);
+
+    // Emit compute:end event
+    if (this.context) {
+      const endEvent: ComputeEvent = {
+        type: "compute",
+        phase: "end",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        workgroups: [x, y, z],
+        workgroupSize: this.workgroupSize,
+        totalInvocations: x * y * z * this.workgroupSize[0] * this.workgroupSize[1] * this.workgroupSize[2],
+      };
+      this.context.emitEvent(endEvent);
+    }
   }
 
   /**

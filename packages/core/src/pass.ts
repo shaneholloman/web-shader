@@ -20,6 +20,10 @@ import {
   type WGSLBindings,
 } from "./uniforms";
 import type { StorageBuffer } from "./storage";
+import { generateEventId } from "./events";
+import type { DrawEvent } from "./events";
+import { RenderTarget } from "./target";
+import { MultiRenderTarget } from "./mrt";
 
 /**
  * Fullscreen pass class
@@ -31,19 +35,19 @@ import type { StorageBuffer } from "./storage";
  *    ctx.pass(`@fragment fn main(...) { ... }`, {
  *      uTexture: someTarget,
  *      color: [1, 0, 0],
- *      radius: 0.5,
- *    });
+      radius: 0.5,
+    });
  *    ```
  * 
  * 2. **Manual mode**: Write your own @group(1) @binding() declarations
  *    ```typescript
  *    ctx.pass(`
- *      @group(1) @binding(0) var uTexture: texture_2d<f32>;
- *      @group(1) @binding(1) var uTextureSampler: sampler;
- *      struct Params { color: vec3f, radius: f32, }
- *      @group(1) @binding(2) var<uniform> params: Params;
+      @group(1) @binding(0) var uTexture: texture_2d<f32>;
+      @group(1) @binding(1) var uTextureSampler: sampler;
+      struct Params { color: vec3f, radius: f32, }
+      @group(1) @binding(2) var<uniform> params: Params;
  *      @fragment fn main(...) { ... }
- *    `, { uniforms: { uTexture: { value: someTarget }, ... } });
+    `, { uniforms: { uTexture: { value: someTarget }, ... } });
  *    ```
  */
 export class Pass {
@@ -262,6 +266,36 @@ ${this.fragmentWGSL}
     renderPassDescriptor: GPURenderPassDescriptor,
     format: GPUTextureFormat
   ): void {
+    const currentTarget = this.context.getTarget();
+    let targetType: "screen" | "texture" = "screen";
+    let targetWidth = this.context.width;
+    let targetHeight = this.context.height;
+
+    if (currentTarget instanceof RenderTarget) {
+      targetType = "texture";
+      targetWidth = currentTarget.width;
+      targetHeight = currentTarget.height;
+    } else if (currentTarget instanceof MultiRenderTarget) {
+      targetType = "texture";
+      targetWidth = currentTarget.width;
+      targetHeight = currentTarget.height;
+    }
+
+    // Emit draw start event
+    const startEvent: DrawEvent = {
+      type: "draw",
+      phase: "start",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      source: "pass",
+      vertexCount: 6,
+      instanceCount: 1,
+      topology: "triangle-list",
+      target: targetType,
+      targetSize: [targetWidth, targetHeight],
+    };
+    this.context.emitEvent(startEvent);
+
     const pipeline = this.getPipeline(format);
 
     // Update uniforms based on mode
@@ -391,6 +425,21 @@ ${this.fragmentWGSL}
     // Draw fullscreen quad
     passEncoder.draw(6, 1, 0, 0);
     passEncoder.end();
+
+    // Emit draw end event
+    const endEvent: DrawEvent = {
+      type: "draw",
+      phase: "end",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      source: "pass",
+      vertexCount: 6,
+      instanceCount: 1,
+      topology: "triangle-list",
+      target: targetType,
+      targetSize: [targetWidth, targetHeight],
+    };
+    this.context.emitEvent(endEvent);
   }
 
   /**

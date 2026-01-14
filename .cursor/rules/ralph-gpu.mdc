@@ -1342,6 +1342,114 @@ fn opSmoothUnion(d1: f32, d2: f32, k: f32) -> f32 {
     ```
 17. **Reuse samplers** across multiple textures and shaders for better performance
 
+## Profiler & Debug System
+
+ralph-gpu includes a built-in profiler and event system for performance monitoring and debugging.
+
+### Enabling Events
+
+```tsx
+const ctx = await gpu.init(canvas, {
+  events: {
+    enabled: true,
+    types: ['draw', 'compute', 'frame', 'memory'], // Optional filter
+    historySize: 1000,  // Event history buffer size
+  },
+});
+```
+
+### Using the Profiler
+
+```tsx
+import { Profiler } from "ralph-gpu";
+
+// Create profiler
+const profiler = new Profiler(ctx, {
+  maxFrameHistory: 120,
+  autoTrackFrames: true,
+});
+
+// In your render loop
+function animate() {
+  profiler.tick();  // Track frame timing for FPS
+  
+  // Profile specific regions
+  profiler.begin('physics');
+  // ... physics code ...
+  profiler.end('physics');
+  
+  profiler.begin('render');
+  myPass.draw();
+  profiler.end('render');
+  
+  // Get stats
+  const fps = profiler.getFPS();
+  const regions = profiler.getResults();
+  
+  requestAnimationFrame(animate);
+}
+
+// Cleanup
+profiler.dispose();
+```
+
+### Profiler API
+
+```tsx
+// FPS tracking (use with pass.draw() API)
+profiler.tick()                        // Call once per animation frame
+profiler.getFPS(sampleCount?)          // Get averaged FPS
+
+// Region profiling
+profiler.begin(name)                   // Start timing a region
+profiler.end(name)                     // End timing a region
+profiler.getRegion(name)               // Get stats for a region
+profiler.getResults()                  // Get all region stats
+
+// Frame statistics
+profiler.getFrameStats()               // Get frame time statistics
+profiler.getLastFrames(count)          // Get last N frame profiles
+profiler.getAverageFrameTime(frames?)  // Average frame interval (for FPS)
+profiler.getAverageRenderTime(frames?) // Average GPU work duration
+
+// Control
+profiler.setEnabled(enabled)           // Enable/disable profiling
+profiler.reset()                       // Clear all data
+profiler.dispose()                     // Cleanup and unsubscribe
+```
+
+### Listening to Events
+
+```tsx
+// Subscribe to specific event type
+const unsubscribe = ctx.on('draw', (event) => {
+  console.log(`Draw: ${event.source}, vertices: ${event.vertexCount}`);
+});
+
+// Subscribe to all events
+ctx.onAll((event) => {
+  console.log(`[${event.type}]`, event);
+});
+
+// Get event history
+const history = ctx.getEventHistory(['draw', 'compute']);
+
+// Unsubscribe
+unsubscribe();
+```
+
+### Event Types
+
+| Event Type | Description |
+|------------|-------------|
+| `draw` | Draw call (pass, material, particles) |
+| `compute` | Compute shader dispatch |
+| `frame` | Frame start/end with timing |
+| `shader_compile` | Shader compilation |
+| `memory` | Buffer/texture allocate/free/resize |
+| `target` | Render target set/clear |
+| `pipeline` | Pipeline creation (with cache hit info) |
+
 ## API Quick Reference
 
 ```tsx
@@ -1350,6 +1458,7 @@ import {
   gpu, GPUContext, Pass, Material, ComputeShader,
   RenderTarget, TextureReference, PingPongTarget, MultiRenderTarget,
   StorageBuffer, Particles, Sampler,
+  Profiler, EventEmitter,  // Debug/profiling
   WebGPUNotSupportedError, DeviceCreationError, ShaderCompileError
 } from "ralph-gpu";
 

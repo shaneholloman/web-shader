@@ -3,6 +3,9 @@
  */
 
 import type { RenderTargetOptions, FilterMode, WrapMode, TextureFormat, RenderTargetUsage } from "./types";
+import type { GPUContext } from "./context";
+import { generateEventId } from "./events";
+import type { MemoryEvent } from "./events";
 
 /**
  * Maps our texture format strings to GPUTextureFormat
@@ -16,6 +19,20 @@ function getGPUTextureFormat(format: TextureFormat): GPUTextureFormat {
     "r32float": "r32float",
   };
   return formatMap[format];
+}
+
+/**
+ * Calculate texture size in bytes
+ */
+function calculateTextureSize(width: number, height: number, format: TextureFormat): number {
+  const bytesPerPixel: Record<TextureFormat, number> = {
+    "rgba8unorm": 4,
+    "rgba16float": 8,
+    "r16float": 2,
+    "rg16float": 4,
+    "r32float": 4,
+  };
+  return width * height * bytesPerPixel[format];
 }
 
 /**
@@ -59,6 +76,7 @@ export class TextureReference {
  */
 export class RenderTarget {
   private device: GPUDevice;
+  private context?: GPUContext;
   private _gpuTexture!: GPUTexture;
   private _textureRef!: TextureReference;
   private _view!: GPUTextureView;
@@ -74,9 +92,11 @@ export class RenderTarget {
     device: GPUDevice,
     width: number,
     height: number,
-    options: RenderTargetOptions = {}
+    options: RenderTargetOptions = {},
+    context?: GPUContext
   ) {
     this.device = device;
+    this.context = context;
     this._width = width;
     this._height = height;
     this._format = options.format || "rgba8unorm";
@@ -87,6 +107,19 @@ export class RenderTarget {
     // Create texture and view
     this.createTexture();
     this.createSampler();
+
+    // Emit allocate event
+    if (this.context) {
+      const allocateEvent: MemoryEvent = {
+        type: "memory",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        resourceType: "texture",
+        size: calculateTextureSize(this._width, this._height, this._format),
+        action: "allocate",
+      };
+      this.context.emitEvent(allocateEvent);
+    }
   }
 
   private createTexture(): void {
@@ -208,6 +241,19 @@ export class RenderTarget {
     this._width = width;
     this._height = height;
     this.createTexture();
+
+    // Emit resize event
+    if (this.context) {
+      const resizeEvent: MemoryEvent = {
+        type: "memory",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        resourceType: "texture",
+        size: calculateTextureSize(this._width, this._height, this._format),
+        action: "resize",
+      };
+      this.context.emitEvent(resizeEvent);
+    }
   }
 
   /**
@@ -260,6 +306,18 @@ export class RenderTarget {
    * Dispose the render target
    */
   dispose(): void {
+    // Emit free event
+    if (this.context) {
+      const freeEvent: MemoryEvent = {
+        type: "memory",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        resourceType: "texture",
+        size: calculateTextureSize(this._width, this._height, this._format),
+        action: "free",
+      };
+      this.context.emitEvent(freeEvent);
+    }
     this._gpuTexture.destroy();
   }
 }

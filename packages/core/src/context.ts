@@ -31,6 +31,10 @@ import {
 } from "./uniforms";
 import type { GlobalUniforms } from "./types";
 
+import { EventEmitter } from "./event-emitter";
+import type { RalphGPUEvent, EventType, TargetEvent } from "./events";
+import { generateEventId } from "./events";
+
 /**
  * GPU Context class
  */
@@ -59,6 +63,10 @@ export class GPUContext {
   private resizeObserver: ResizeObserver | null = null;
   private samplers: Set<Sampler> = new Set();
 
+  private eventEmitter?: EventEmitter;
+  private frameCounter = 0;
+  private enableGPUTiming: boolean; // Add this field
+
   constructor(
     device: GPUDevice,
     context: GPUCanvasContext,
@@ -74,6 +82,15 @@ export class GPUContext {
     this._autoResize = options.autoResize || false;
     this._dpr = this.calculateEffectiveDpr();
     this.debug = options.debug || false;
+    this.enableGPUTiming = options.events?.enableGPUTiming || false; // Initialize here
+
+    // Initialize event system
+    if (options.events?.enabled) {
+      this.eventEmitter = new EventEmitter({
+        types: options.events.types as EventType[], // Explicit cast
+        historySize: options.events.historySize,
+      });
+    }
 
     // Set canvas size based on display size or canvas attributes
     if (options.autoResize) {
@@ -87,26 +104,28 @@ export class GPUContext {
       // Setup ResizeObserver to track canvas size changes
       this.resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
-          // Use contentBoxSize to get accurate CSS dimensions without triggering feedback loop
+          // Get CSS dimensions - prefer contentBoxSize but fall back to contentRect for older browsers
+          let cssWidth: number;
+          let cssHeight: number;
+          
           const contentBoxSize = entry.contentBoxSize?.[0];
           if (contentBoxSize) {
-            const cssWidth = contentBoxSize.inlineSize;
-            const cssHeight = contentBoxSize.blockSize;
-            
+            // Modern browsers: use contentBoxSize for accurate dimensions
+            cssWidth = contentBoxSize.inlineSize;
+            cssHeight = contentBoxSize.blockSize;
+          } else {
+            // Fallback for older browsers: use contentRect
+            cssWidth = entry.contentRect.width;
+            cssHeight = entry.contentRect.height;
+          }
+          
+          if (cssWidth > 0 && cssHeight > 0) {
             // Recalculate effective DPR
             this._dpr = this.calculateEffectiveDpr();
             
             // Set internal rendering resolution = CSS size * DPR
             this._width = Math.floor(cssWidth * this._dpr);
             this._height = Math.floor(cssHeight * this._dpr);
-            this.canvas.width = this._width;
-            this.canvas.height = this._height;
-          } else {
-            // Fallback for older browsers
-            const { width, height } = entry.contentRect;
-            this._dpr = this.calculateEffectiveDpr();
-            this._width = Math.floor(width * this._dpr);
-            this._height = Math.floor(height * this._dpr);
             this.canvas.width = this._width;
             this.canvas.height = this._height;
           }
@@ -139,6 +158,66 @@ export class GPUContext {
     };
 
     this.updateGlobals();
+  }
+
+  /**
+   * Helper to emit events only if the event system is enabled
+   * and there are listeners or history configured for the event type.
+   * This ensures zero overhead when events are not needed.
+   */
+  public emitEvent(event: RalphGPUEvent): void {
+    // The eventEmitter already handles checking if the event type is allowed by options.types
+    // and if there are any listeners. So, we only need to check if the eventEmitter exists.
+    if (this.eventEmitter) {
+      this.eventEmitter.emit(event);
+    }
+  }
+
+  /**
+   * Subscribe to a specific event type.
+   * Returns an unsubscribe function.
+   */
+  on(type: EventType, listener: (event: RalphGPUEvent) => void): () => void {
+    if (this.eventEmitter) {
+      return this.eventEmitter.on(type, listener);
+    }
+    return () => {}; // Return a no-op unsubscribe function if emitter is not active
+  }
+
+  /**
+   * Unsubscribe from a specific event type.
+   */
+  off(type: EventType, listener: (event: RalphGPUEvent) => void): void {
+    this.eventEmitter?.off(type, listener);
+  }
+
+  /**
+   * Subscribe to a specific event type once.
+   * Returns an unsubscribe function.
+   */
+  once(type: EventType, listener: (event: RalphGPUEvent) => void): () => void {
+    if (this.eventEmitter) {
+      return this.eventEmitter.once(type, listener);
+    }
+    return () => {};
+  }
+
+  /**
+   * Subscribe to all event types.
+   * Returns an unsubscribe function.
+   */
+  onAll(listener: (event: RalphGPUEvent) => void): () => void {
+    if (this.eventEmitter) {
+      return this.eventEmitter.onAll(listener);
+    }
+    return () => {};
+  }
+
+  /**
+   * Get event history.
+   */
+  getEventHistory(filter?: EventType[]): RalphGPUEvent[] {
+    return this.eventEmitter?.getHistory(filter) || [];
   }
 
   /**
@@ -258,7 +337,8 @@ export class GPUContext {
         this.globals.resolution = [this.currentTarget.width, this.currentTarget.height];
         this.globals.aspect = this.currentTarget.width / this.currentTarget.height;
       }
-    } else {
+    }
+     else {
       this.globals.resolution = [this._width, this._height];
       this.globals.aspect = this._width / this._height;
     }
@@ -291,7 +371,6 @@ export class GPUContext {
    * 
    * **Manual mode**: Write your own @group(1) @binding() declarations
    * ```typescript
-   * ctx.pass(`
    *   @group(1) @binding(0) var uTexture: texture_2d<f32>;
    *   @group(1) @binding(1) var uTextureSampler: sampler;
    *   struct Params { color: vec3f, intensity: f32, }
@@ -344,7 +423,7 @@ export class GPUContext {
    * Create a compute shader
    */
   compute(wgsl: string, options?: ComputeOptions): ComputeShader {
-    return new ComputeShader(this.device, wgsl, this.globalsBuffer, options);
+    return new ComputeShader(this.device, wgsl, this.globalsBuffer, this, options);
   }
 
   /**
@@ -354,7 +433,7 @@ export class GPUContext {
   target(width?: number, height?: number, options?: RenderTargetOptions): RenderTarget {
     const w = width ?? this._width;
     const h = height ?? this._height;
-    return new RenderTarget(this.device, w, h, options);
+    return new RenderTarget(this.device, w, h, options, this);
   }
 
   /**
@@ -381,13 +460,13 @@ export class GPUContext {
    * Create a storage buffer
    */
   storage(byteSize: number): StorageBuffer {
-    return new StorageBuffer(this.device, byteSize);
+    return new StorageBuffer(this.device, byteSize, this);
   }
 
   /**
    * Create a particle system with instanced quads
    * 
-   * User provides full shader control - no built-in colors, shapes, or assumptions.
+   * User provides full shader control - no built-in colors, shapes, or assumptions about data layout
    * Built-in helpers: quadOffset(vid) returns -0.5 to 0.5, quadUV(vid) returns 0 to 1
    * 
    * ```typescript
@@ -400,7 +479,6 @@ export class GPUContext {
    *     
    *     @vertex fn vs_main(@builtin(instance_index) iid: u32, @builtin(vertex_index) vid: u32) -> VertexOutput {
    *       let p = particles[iid];
-   *       var out: VertexOutput;
    *       out.position = vec4f(p.pos + quadOffset(vid) * p.size, 0.0, 1.0);
    *       out.uv = quadUV(vid);
    *       return out;
@@ -461,6 +539,58 @@ export class GPUContext {
    */
   setTarget(target: RenderTarget | MultiRenderTarget | null): void {
     this.currentTarget = target;
+
+    // Emit target event
+    if (this.eventEmitter) {
+      let targetType: "screen" | "texture" | "mrt" = "screen";
+      let size: [number, number] = [this._width, this._height];
+      let format: GPUTextureFormat | undefined;
+
+      if (target === null) {
+        targetType = "screen";
+        format = this.format;
+      } else if (target instanceof RenderTarget) {
+        targetType = "texture";
+        size = [target.width, target.height];
+        // Map internal format to GPUTextureFormat
+        const formatMap: Record<string, GPUTextureFormat> = {
+          "rgba8unorm": "rgba8unorm",
+          "rgba16float": "rgba16float",
+          "r16float": "r16float",
+          "rg16float": "rg16float",
+          "r32float": "r32float",
+        };
+        format = formatMap[target.format] || "rgba8unorm";
+      } else if (target instanceof MultiRenderTarget) {
+        targetType = "mrt";
+        size = [target.width, target.height];
+      }
+
+      const targetEvent: TargetEvent = {
+        type: "target",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        target: targetType,
+        size,
+        format,
+        action: "set",
+      };
+      this.emitEvent(targetEvent);
+    }
+  }
+
+  /**
+   * Get the current render target (for event emission)
+   */
+  getTarget(): RenderTarget | MultiRenderTarget | null {
+    return this.currentTarget;
+  }
+
+  /**
+   * Check if currently rendering to a texture vs screen
+   */
+  isRenderingToTexture(): boolean {
+    return this.currentTarget !== null;
   }
 
   /**
@@ -552,6 +682,43 @@ export class GPUContext {
     }
 
     this.device.queue.submit([commandEncoder.finish()]);
+
+    // Emit clear target event
+    if (this.eventEmitter) {
+      let targetType: "screen" | "texture" | "mrt" = "screen";
+      let size: [number, number] = [this._width, this._height];
+      let format: GPUTextureFormat | undefined;
+
+      if (clearTarget === null) {
+        targetType = "screen";
+        format = this.format;
+      } else if (clearTarget instanceof RenderTarget) {
+        targetType = "texture";
+        size = [clearTarget.width, clearTarget.height];
+        const formatMap: Record<string, GPUTextureFormat> = {
+          "rgba8unorm": "rgba8unorm",
+          "rgba16float": "rgba16float",
+          "r16float": "r16float",
+          "rg16float": "rg16float",
+          "r32float": "r32float",
+        };
+        format = formatMap[clearTarget.format] || "rgba8unorm";
+      } else if (clearTarget instanceof MultiRenderTarget) {
+        targetType = "mrt";
+        size = [clearTarget.width, clearTarget.height];
+      }
+
+      const targetEvent: TargetEvent = {
+        type: "target",
+        timestamp: performance.now(),
+        id: generateEventId(),
+        target: targetType,
+        size,
+        format,
+        action: "clear",
+      };
+      this.emitEvent(targetEvent);
+    }
   }
 
   /**
@@ -625,9 +792,10 @@ export class GPUContext {
   }
 
   /**
-   * Execute a pass or material draw call (internal helper)
+   * Execute a pass or material draw call within a frame.
+   * Use this with beginFrame()/endFrame() to batch multiple draw calls.
    */
-  private executeDrawCall(
+  executeDrawCall(
     drawable: Pass | Material,
     commandEncoder: GPUCommandEncoder
   ): void {
@@ -675,6 +843,18 @@ export class GPUContext {
    */
   beginFrame(): GPUCommandEncoder {
     this.updateGlobals();
+    this.frameCounter++;
+
+    this.emitEvent({
+      type: "frame",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      frameNumber: this.frameCounter,
+      deltaTime: this.globals.deltaTime, // Note: deltaTime here is from previous frame's calculation
+      time: this.globals.time,
+      phase: "start",
+    });
+
     return this.device.createCommandEncoder();
   }
 
@@ -683,6 +863,16 @@ export class GPUContext {
    */
   endFrame(commandEncoder: GPUCommandEncoder): void {
     this.device.queue.submit([commandEncoder.finish()]);
+
+    this.emitEvent({
+      type: "frame",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      frameNumber: this.frameCounter,
+      deltaTime: this.globals.deltaTime,
+      time: this.globals.time,
+      phase: "end",
+    });
   }
 
   /**
@@ -722,6 +912,13 @@ export class GPUContext {
     // This is required to allow re-initialization with a new device
     this.context.unconfigure();
     this.device.destroy();
+
+    if (this.eventEmitter) {
+      // The EventEmitter itself will be garbage collected as it's a private field of this class.
+      // No explicit 'clearListeners' or similar is needed on EventEmitter here.
+      // Setting it to undefined explicitly makes it clear it's no longer used.
+      this.eventEmitter = undefined;
+    }
   }
 }
 

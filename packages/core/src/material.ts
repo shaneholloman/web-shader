@@ -13,6 +13,8 @@ import {
   parseBindGroupBindings,
 } from "./uniforms";
 import type { StorageBuffer } from "./storage";
+import { generateEventId } from "./events";
+import type { DrawEvent } from "./events";
 
 /**
  * Material class
@@ -177,6 +179,21 @@ export class Material {
     renderPassDescriptor: GPURenderPassDescriptor,
     format: GPUTextureFormat
   ): void {
+    // Emit draw start event
+    const startEvent: DrawEvent = {
+      type: "draw",
+      phase: "start",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      source: "material",
+      vertexCount: this.indexBuffer ? this.indexCount : this.vertexCount,
+      instanceCount: this.instances,
+      topology: this.topology,
+      target: this.context.isRenderingToTexture() ? "texture" : "screen",
+      targetSize: [this.context.width, this.context.height],
+    };
+    this.context.emitEvent(startEvent);
+
     const pipeline = this.getPipeline(format);
 
     // Update uniforms
@@ -302,6 +319,21 @@ export class Material {
     }
     
     passEncoder.end();
+
+    // Emit draw end event
+    const endEvent: DrawEvent = {
+      type: "draw",
+      phase: "end",
+      timestamp: performance.now(),
+      id: generateEventId(),
+      source: "material",
+      vertexCount: this.indexBuffer ? this.indexCount : this.vertexCount,
+      instanceCount: this.instances,
+      topology: this.topology,
+      target: this.context.isRenderingToTexture() ? "texture" : "screen",
+      targetSize: [this.context.width, this.context.height],
+    };
+    this.context.emitEvent(endEvent);
   }
 
   /**
