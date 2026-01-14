@@ -296,11 +296,17 @@ Include relevant rules in your LoopAgent configuration:
    ```
 
 5. **Handle completion**:
-   - ✅ **Task passed**: Commit the changes on your current branch
+   - ✅ **Task passed**: **ALWAYS commit the changes immediately** before moving to the next ralph:
+     ```bash
+     cd $PROJECT_ROOT
+     git add -A
+     git commit -m "feat: brief description of what the ralph accomplished"
+     ```
    - ❌ **Task failed**: Reset changes and rerun with improved task prompt
 
 ## Best Practices
 
+- **COMMIT AFTER EVERY SUCCESSFUL RALPH**: Always `git add -A && git commit` immediately after a ralph completes successfully. Don't accumulate uncommitted changes across multiple ralphs.
 - **Repository structure clarity**: Always include a visual diagram of the repo structure in the TASK string so the LLM understands where it is and how to navigate
 - **Progress tracking**: Ralph tracks progress in its own folder (`.progress.md`, `.brain/`)
 - **Don't pre-create state files**: Let the agent create `.brain/` and `.progress.md` - provide templates in TASK string
