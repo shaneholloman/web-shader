@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: example-registry
     content: Create examples registry with metadata (title, description, code) for each example
-    status: pending
+    status: completed
   - id: gallery-page
     content: Redesign gallery page with thumbnail grid layout
     status: pending
