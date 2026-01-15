@@ -4,7 +4,7 @@ overview: Transform the ralph-gpu docs app examples into an interactive gallery 
 todos:
   - id: setup-monaco
     content: Install @monaco-editor/react in docs app and create MonacoEditor wrapper component
-    status: pending
+    status: in-progress
   - id: examples-registry
     content: Create examples registry with metadata (title, description, shader code) for each example
     status: pending
@@ -20,6 +20,14 @@ todos:
   - id: add-more-examples
     content: Add more interactive examples (raymarching, particles, etc.)
     status: pending
+
+## Progress Log
+
+### 2026-01-15: Starting fresh implementation
+- Starting from ralph 60 (ignoring previous work on branch)
+- Current docs app has `/examples` page with 3 live shader demos (gradient, wave, color cycle)
+- Monaco editor not installed yet
+- No `lib/` folder exists
 ---
 
 # Interactive Examples Gallery
