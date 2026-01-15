@@ -1,7 +1,7 @@
 'use client';
 
 import { TaskTrace } from '@/lib/types';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface ExecutionTimelineProps {
@@ -27,6 +27,36 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
   const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | null>(null);
   
   const brushRef = useRef<HTMLDivElement>(null);
+
+  // Attach document-level mouse listeners when dragging to handle moves/releases outside the element
+  useEffect(() => {
+    if (!draggingHandle) return;
+
+    const handleDocumentMouseMove = (e: MouseEvent) => {
+      if (!brushRef.current) return;
+      
+      const rect = brushRef.current.getBoundingClientRect();
+      const percentage = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      
+      if (draggingHandle === 'start') {
+        setZoomStart(Math.min(percentage, zoomEnd - 5));
+      } else {
+        setZoomEnd(Math.max(percentage, zoomStart + 5));
+      }
+    };
+
+    const handleDocumentMouseUp = () => {
+      setDraggingHandle(null);
+    };
+
+    document.addEventListener('mousemove', handleDocumentMouseMove);
+    document.addEventListener('mouseup', handleDocumentMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
+    };
+  }, [draggingHandle, zoomStart, zoomEnd]);
 
   // Filter tasks with valid timestamps
   const tasks = allTasks.filter(t => t.startTime && t.endTime && t.summary);
@@ -163,9 +193,6 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
         <div 
           className="relative bg-background-tertiary rounded-lg overflow-hidden"
           style={{ height: timelineHeight }}
-          onMouseMove={draggingHandle ? handleBrushMouseMove : undefined}
-          onMouseUp={draggingHandle ? handleBrushMouseUp : undefined}
-          onMouseLeave={draggingHandle ? handleBrushMouseUp : undefined}
         >
           {/* Time grid lines */}
           <div className="absolute inset-0 flex">
@@ -243,8 +270,6 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
           <div 
             ref={brushRef}
             className="relative h-16 bg-background-tertiary rounded-lg overflow-hidden cursor-default"
-            onMouseMove={handleBrushMouseMove}
-            onMouseUp={handleBrushMouseUp}
           >
             {/* Mini timeline overview */}
             <div className="absolute inset-0 flex items-center px-1">
