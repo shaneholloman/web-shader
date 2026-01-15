@@ -648,6 +648,18 @@ pingPong.resize(width, height); // Resize both
 pingPong.dispose(); // Cleanup
 ```
 
+### Multi Render Target (MRT)
+
+```typescript
+mrt.get(name); // Get target by name → RenderTarget | undefined
+mrt.getViews(); // Get all texture views → GPUTextureView[]
+mrt.getFormats(); // Get all formats → string[]
+mrt.getFirstTarget(); // Get first target → RenderTarget | undefined
+mrt.width / mrt.height; // Dimensions
+mrt.resize(width, height); // Resize all targets
+mrt.dispose(); // Cleanup all targets
+```
+
 ### Storage Buffer
 
 ```typescript
@@ -808,8 +820,8 @@ pnpm run test:all
 
 | Format | Raw | Gzip | Brotli |
 |--------|-----|------|--------|
-| index.js | 44.07 kB | 11.05 kB | 9.86 kB |
-| index.mjs | 43.56 kB | 10.86 kB | 9.68 kB |
+| index.js | 44.18 kB | 11.08 kB | 9.89 kB |
+| index.mjs | 43.67 kB | 10.88 kB | 9.71 kB |
 
 > 📦 **~10.9 kB** gzipped (ESM)
 

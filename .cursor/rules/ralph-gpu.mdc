@@ -1572,6 +1572,15 @@ pingPong.swap()                            // Swap read/write
 pingPong.resize(width, height)             // Resize both
 pingPong.dispose()                         // Cleanup
 
+// Multi Render Target (MRT)
+mrt.get(name)                              // Get target by name → RenderTarget | undefined
+mrt.getViews()                             // Get all GPUTextureViews → GPUTextureView[]
+mrt.getFormats()                           // Get all formats → string[]
+mrt.getFirstTarget()                       // Get first target → RenderTarget | undefined
+mrt.width / mrt.height                     // Dimensions
+mrt.resize(width, height)                  // Resize all targets
+mrt.dispose()                              // Cleanup all targets
+
 // Storage Buffer
 storage.write(data)                        // Write TypedArray
 storage.gpuBuffer                          // Underlying GPUBuffer
