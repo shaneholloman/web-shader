@@ -282,17 +282,20 @@ Unusual but valid usage patterns.
 - This is a known limitation: shader errors are logged but not thrown
 
 ### Ralph 49: Blend Modes Browser Tests ✅
+
 **Completed**: 2026-01-14 22:20
 **Cost**: ~$0.17 (Claude - retry after Gemini failed)
 **Test file**: `blend-modes.browser.test.ts`
 
 **Tests added** (4 tests):
+
 1. Alpha blend mode - semi-transparent blue over red = purple
 2. Additive blend mode - red + green = yellow
-3. Multiply blend mode - yellow * magenta = red
+3. Multiply blend mode - yellow \* magenta = red
 4. Screen blend mode - red screen green = yellow
 
 **Key findings**:
+
 - `context.autoClear = true` by default - clears target before each draw
 - To test blending, MUST set `context.autoClear = false` before the blend draw
 - Blend mode passed as `{ blend: "alpha" }` in second argument to pass()
