@@ -319,7 +319,12 @@ Include relevant rules in your LoopAgent configuration:
      git add -A
      git commit -m "feat: brief description of what the ralph accomplished"
      ```
-   - ❌ **Task failed**: Reset changes and rerun with improved task prompt
+   - ❌ **Task failed**: Follow this recovery process:
+     1. **Reset ALL uncommitted changes**: `git checkout -- . && git clean -fd` (remove all changes from the failed ralph)
+     2. **Analyze why it failed**: Check `.ralph-output.log`, `.progress.md`, test output
+     3. **Create a NEW ralph** with improved instructions based on learnings
+     4. **Try a different model**: If `google/gemini-3-flash` failed, use `anthropic/claude-sonnet-4-20250514`
+     5. **Never manually fix** the ralph's code - let the new ralph do it with better instructions
 
 ## Best Practices
 
