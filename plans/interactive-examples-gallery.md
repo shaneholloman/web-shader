@@ -7,19 +7,19 @@ todos:
     status: completed
   - id: examples-registry
     content: Create examples registry with metadata (title, description, shader code) for each example
-    status: pending
+    status: completed
   - id: gallery-page
     content: Transform /examples into a gallery grid showing all examples as cards
-    status: pending
+    status: completed
   - id: example-page
     content: Create /examples/[slug] dynamic route with ShaderPlayground (editor + preview)
-    status: pending
+    status: completed
   - id: shader-playground
     content: Build ShaderPlayground component with split layout, run button, error display
-    status: pending
+    status: completed
   - id: add-more-examples
     content: Add more interactive examples (raymarching, particles, etc.)
-    status: pending
+    status: completed
 
 ## Progress Log
 
