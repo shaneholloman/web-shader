@@ -264,16 +264,38 @@ Unusual but valid usage patterns.
 - Rendering continues to work correctly after resize
 
 ### Ralph 48: Error Handling Browser Tests ✅
+
 **Completed**: 2026-01-14 19:45
 **Cost**: ~$0.57 (ralph) + manual fixes
 **Test file**: `error-handling.browser.test.ts`
 
 **Tests added**:
+
 1. Invalid WGSL does not crash (graceful handling)
 2. Valid WGSL does not throw
 
 **Key findings**:
+
 - The library handles invalid WGSL gracefully without crashing
 - WebGPU's `getCompilationInfo()` is async, so shader errors don't propagate as JS exceptions
 - Invalid shaders may render incorrectly but don't crash the app
 - This is a known limitation: shader errors are logged but not thrown
+
+### Ralph 49: Blend Modes Browser Tests ✅
+**Completed**: 2026-01-14 22:20
+**Cost**: ~$0.17 (Claude - retry after Gemini failed)
+**Test file**: `blend-modes.browser.test.ts`
+
+**Tests added** (4 tests):
+1. Alpha blend mode - semi-transparent blue over red = purple
+2. Additive blend mode - red + green = yellow
+3. Multiply blend mode - yellow * magenta = red
+4. Screen blend mode - red screen green = yellow
+
+**Key findings**:
+- `context.autoClear = true` by default - clears target before each draw
+- To test blending, MUST set `context.autoClear = false` before the blend draw
+- Blend mode passed as `{ blend: "alpha" }` in second argument to pass()
+- First attempt with Gemini failed; Claude succeeded in 3 iterations
+
+**Lesson learned**: When a ralph fails, reset changes, improve instructions with learnings, and try a different model.
