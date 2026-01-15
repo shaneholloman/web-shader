@@ -1,9 +1,15 @@
 /**
- * 57-example-registry: Create examples registry with metadata for all ralph-gpu examples
+ * 57-example-registry: Create examples registry with metadata for ralph-gpu examples
  */
 
 import "dotenv/config";
-import { LoopAgent, brainRule, trackProgressRule, minimalChangesRule, completionRule } from "@ralph/agent-loop";
+import {
+  LoopAgent,
+  brainRule,
+  trackProgressRule,
+  minimalChangesRule,
+  completionRule,
+} from "@ralph/agent-loop";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -18,6 +24,7 @@ This script is running from: ${CWD}
 Project root is: ${PROJECT_ROOT}
 
 ### Repository Structure
+\`\`\`
 ralph-gpu/                    (project root)
 ├── apps/
 │   └── examples/             (Next.js examples app - YOUR TARGET)
@@ -30,84 +37,99 @@ ralph-gpu/                    (project root)
 │       └── lib/              (CREATE examples.ts HERE)
 └── ralphs/
     └── 57-example-registry/  (← YOU ARE HERE)
-
-## ⚠️ CRITICAL: CHECK EXISTING PROGRESS FIRST ⚠️
-**BEFORE doing ANY work, you MUST:**
-1. Check if .progress.md exists and read it
-2. Check if .brain/ exists and read its contents  
-3. Check what files already exist in the target locations
-
-**If progress exists, CONTINUE from where you left off. DO NOT restart from scratch!**
-**If files already exist, skip creating them and move to the NEXT incomplete task.**
-
-## Progress Tracking Rules
-- ONLY create .progress.md if it doesn't exist
-- ONLY update .progress.md by APPENDING or updating checkboxes, never recreate from scratch  
-- Read your previous progress before each action to avoid repeating work
-- If a task is already marked [x] complete, skip it and move to the next one
+\`\`\`
 
 ## Context
 We are building a Shadertoy-like interactive playground for ralph-gpu examples.
-This task creates a centralized registry of all examples with their metadata and shader code.
+This task creates a centralized registry of examples with their metadata and shader code.
 The registry will be used by the gallery page and playground to load example data.
+
+**START SMALL**: Only include 3-4 examples to start. We can add more later.
 
 ## Acceptance Criteria (ALL MUST BE MET)
 
 ### 1. Create Examples Registry File
-- [ ] Create file: apps/examples/lib/examples.ts
+- [ ] Create file: ${PROJECT_ROOT}/apps/examples/lib/examples.ts
 - [ ] Define ExampleMeta interface with: slug, title, description, category, shaderCode
-- [ ] Export array of all examples with their metadata
-- [ ] Extract WGSL shader code from each example page
+- [ ] Define Category type: "basics" | "techniques" | "simulations" | "advanced" | "features"
+- [ ] Export examples array with 3-4 examples only: basic, uniforms, raymarching, lines
 
-### 2. Example Categories
-Group examples into these categories:
-- "basics": basic, uniforms, geometry, lines
-- "techniques": render-target, ping-pong, particles, compute
-- "simulations": fluid, raymarching
-- "advanced": metaballs, morphing, mandelbulb, terrain, alien-planet
-- "features": triangle-particles, texture-sampling, storage-texture
-
-### 3. Extract Shader Code
+### 2. Extract Shader Code (for the 3-4 examples only)
 - [ ] Read each example's page.tsx file
-- [ ] Extract the WGSL shader code (the string inside ctx.pass() or ctx.material())
+- [ ] Extract the WGSL shader code (the string passed to ctx.pass() or similar)
 - [ ] Store as shaderCode in the registry
 
-### 4. Helper Functions
+### 3. Helper Functions
 - [ ] Export getExampleBySlug(slug: string) function
 - [ ] Export getExamplesByCategory(category: string) function  
 - [ ] Export getAllCategories() function
 
-### 5. TypeScript Types
-- [ ] Export ExampleMeta type
-- [ ] Export Category type
-- [ ] Ensure all types are properly defined
+### 4. Verify Build
+- [ ] Run: cd ${PROJECT_ROOT}/apps/examples && pnpm build
+- [ ] Ensure no TypeScript errors
 
 ## Implementation Guide
 
-### Step 1: Create the lib directory if needed
-mkdir -p ${PROJECT_ROOT}/apps/examples/lib
+### Step 1: Read example files to understand the shader code format
+\`\`\`bash
+cat ${PROJECT_ROOT}/apps/examples/app/basic/page.tsx
+\`\`\`
 
-### Step 2: Create examples.ts
-The file should have:
-- ExampleMeta interface with: slug, title, description, category, shaderCode
-- Category type union: "basics" | "techniques" | "simulations" | "advanced" | "features"
-- examples array with all example metadata (read shader code from each page.tsx file)
-- Helper functions: getExampleBySlug, getExamplesByCategory, getAllCategories
+### Step 2: Create ${PROJECT_ROOT}/apps/examples/lib/examples.ts
+The file structure should be:
+\`\`\`typescript
+export type Category = "basics" | "techniques" | "simulations" | "advanced" | "features";
 
-### Step 3: Extract shader code from each example
-For each example page in apps/examples/app/[name]/page.tsx:
-1. Read the file content
-2. Find WGSL shader code inside ctx.pass() or similar
-3. Add to the examples array with proper metadata
+export interface ExampleMeta {
+  slug: string;
+  title: string;
+  description: string;
+  category: Category;
+  shaderCode: string;
+}
 
-## Testing
-After creating the registry, verify it works:
-cd ${PROJECT_ROOT}/apps/examples
-pnpm build
+export const examples: ExampleMeta[] = [
+  // Add 3-4 examples here with extracted shader code
+];
 
-## 🚨 FIRST ACTION - ALWAYS DO THIS FIRST 🚨
-Your VERY FIRST action must be to check existing progress and what already exists.
-Based on what already exists, SKIP completed tasks and proceed to the next incomplete one.
+export function getExampleBySlug(slug: string): ExampleMeta | undefined {
+  return examples.find(e => e.slug === slug);
+}
+
+export function getExamplesByCategory(category: Category): ExampleMeta[] {
+  return examples.filter(e => e.category === category);
+}
+
+export function getAllCategories(): Category[] {
+  return [...new Set(examples.map(e => e.category))];
+}
+\`\`\`
+
+### Step 3: Build to verify
+\`\`\`bash
+cd ${PROJECT_ROOT}/apps/examples && pnpm build
+\`\`\`
+
+## Completion Criteria
+When the build passes and the file has:
+- ExampleMeta interface
+- 3-4 examples with shader code
+- Helper functions
+
+→ Call done({ summary: "Created examples registry with X examples" }) IMMEDIATELY
+
+## CRITICAL: Avoid These Anti-Patterns
+- Do NOT re-read files you already read
+- Do NOT keep verifying after build passes
+- Do NOT extract ALL examples - just 3-4 to start
+- After build passes → call done() immediately
+
+## 🚨 FIRST ACTION 🚨
+1. Check if ${PROJECT_ROOT}/apps/examples/lib/examples.ts already exists
+2. If not, read 3-4 example page.tsx files to extract shader code
+3. Create the examples.ts file
+4. Run build
+5. If build passes → done()
 `;
 
 async function checkRegistryCreated(): Promise<boolean> {
@@ -131,15 +153,16 @@ async function main() {
     model: "google/gemini-3-flash",
     trace: true,
     task: TASK,
+    // Include completionRule to prevent infinite loops
     rules: [brainRule, trackProgressRule, minimalChangesRule, completionRule],
-    limits: { maxIterations: 25, maxCost: 10.0, timeout: "30m" },
+    limits: { maxIterations: 15, maxCost: 5.0, timeout: "15m" },
     onUpdate: (status) => {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[${elapsed}s] Iteration ${status.iteration} | State: ${status.state} | Cost: $${status.cost.toFixed(4)}`);
     },
     onStuck: async (ctx) => {
       console.log(`\n⚠️ Agent stuck: ${ctx.reason}`);
-      return "Try a different approach. Update .progress.md with what you tried and what didn't work.";
+      return "If build passes, call done() immediately. Do not re-verify.";
     },
     onError: (error) => {
       console.error(`\n❌ Error: ${error.message}`);

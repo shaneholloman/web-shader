@@ -1,29 +1,15 @@
-# Ralph-GPU Examples Registry
+# Examples Registry
 
-## Overview
-A centralized registry of all examples in the `ralph-gpu` repository. This registry is used to populate the gallery and provide initial shader code for the interactive playground.
+The examples registry is located at `apps/examples/lib/examples.ts`.
+It contains metadata and shader code for selected examples, which are used by the gallery and playground.
 
-## Location
-- Registry File: `apps/examples/lib/examples.ts`
-- Examples Directory: `apps/examples/app/`
+## Structure
+- `ExampleMeta`: interface for example metadata.
+- `examples`: array of `ExampleMeta` objects.
+- Helper functions: `getExampleBySlug`, `getExamplesByCategory`, `getAllCategories`.
 
-## Metadata Structure
-```typescript
-export interface ExampleMeta {
-  slug: string;
-  title: string;
-  description: string;
-  category: "basics" | "techniques" | "simulations" | "advanced" | "features";
-  shaderCode: string;
-}
-```
-
-## Categories
-- **basics**: basic, uniforms, geometry, lines
-- **techniques**: render-target, ping-pong, particles, compute
-- **simulations**: fluid, raymarching
-- **advanced**: metaballs, morphing, mandelbulb, terrain, alien-planet
-- **features**: triangle-particles, texture-sampling, storage-texture
-
-## Extraction Logic
-Shader code is extracted from `page.tsx` files by looking for the largest WGSL template literal block (`/* wgsl */ \`...\``). This handles cases where examples have multiple passes by picking the most substantial one.
+## Examples Included
+1. basic
+2. uniforms
+3. raymarching
+4. lines

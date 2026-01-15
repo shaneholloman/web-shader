@@ -1,111 +1,156 @@
 ---
 name: Interactive Examples Gallery
-overview: Transform the ralph-gpu examples app into an interactive Shadertoy-like playground with a gallery of pre-rendered examples and a Monaco-powered code editor.
+overview: Transform the ralph-gpu docs app examples into an interactive gallery with individual playground pages for each example.
 todos:
   - id: setup-monaco
-    content: Install @monaco-editor/react and create MonacoEditor wrapper component
-    status: completed
-  - id: example-registry
-    content: Create examples registry with metadata (title, description, code) for each example
-    status: completed
-  - id: gallery-page
-    content: Redesign gallery page with thumbnail grid layout
-    status: completed
-  - id: playground-page
-    content: Create playground page with split layout (editor + preview)
-    status: completed
-  - id: preview-component
-    content: Build Preview component that compiles and runs shader code
-    status: completed
-  - id: file-tabs
-    content: Implement file tabs UI for switching between files
+    content: Install @monaco-editor/react in docs app and create MonacoEditor wrapper component
     status: pending
-  - id: run-logic
-    content: Implement Run button and Cmd+Enter keyboard shortcut
-    status: completed
-  - id: thumbnail-script
-    content: Create Playwright script to generate example thumbnails
-    status: completed
-  - id: styling
-    content: Style the playground with dark theme matching Shadertoy aesthetic
-    status: completed
+  - id: examples-registry
+    content: Create examples registry with metadata (title, description, shader code) for each example
+    status: pending
+  - id: gallery-page
+    content: Transform /examples into a gallery grid showing all examples as cards
+    status: pending
+  - id: example-page
+    content: Create /examples/[slug] dynamic route with ShaderPlayground (editor + preview)
+    status: pending
+  - id: shader-playground
+    content: Build ShaderPlayground component with split layout, run button, error display
+    status: pending
+  - id: add-more-examples
+    content: Add more interactive examples (raymarching, particles, etc.)
+    status: pending
 ---
 
 # Interactive Examples Gallery
 
+## Target App
+
+**`apps/docs/`** - The ralph-gpu documentation site
+
+## Current State
+
+The docs app already has:
+
+- `/examples` page with 3 live shader demos (gradient, wave, color cycle)
+- `ExampleCanvas` component that renders WebGPU shaders
+- Tailwind CSS configured
+- `ralph-gpu` as a dependency
+- Dark theme with good styling
+- CodeBlock component for syntax highlighting
+
+## Goal
+
+Transform the examples section into:
+
+1. **Gallery page** (`/examples`) - Grid of example cards with titles and descriptions
+2. **Individual pages** (`/examples/[slug]`) - Full playground with Monaco editor + live preview
+
 ## Design Decisions
 
-| Question         | Decision                                                                 |
-| ---------------- | ------------------------------------------------------------------------ |
-| Code editor      | **Monaco Editor** - Full VS Code experience with TypeScript IntelliSense |
-| Preview behavior | **Manual run** - User clicks "Run" button or presses Cmd/Ctrl+Enter      |
+| Question         | Decision                                                             |
+| ---------------- | -------------------------------------------------------------------- |
+| Code editor      | **Monaco Editor** - Full VS Code experience with syntax highlighting |
+| Preview behavior | **Manual run** - User clicks "Run" button or presses Cmd/Ctrl+Enter  |
+| Layout           | **Split view** - Editor (left ~50%) + Canvas preview (right ~50%)    |
+| Routing          | **Dynamic routes** - `/examples/[slug]` for each example             |
 
-## Architecture Overview
+## Architecture
 
-```mermaid
-flowchart LR
-    subgraph gallery [Gallery Page]
-        Grid[Example Cards with Thumbnails]
-    end
+```
+/examples (Gallery)
+├── ExampleCard (gradient) → /examples/gradient
+├── ExampleCard (wave) → /examples/wave
+└── ExampleCard (color-cycle) → /examples/color-cycle
 
-    subgraph playground [Playground Page]
-        Editor[Monaco Editor]
-        Preview[WebGPU Canvas]
-        Files[File Tabs]
-        RunBtn[Run Button]
-    end
-
-    Grid -->|click| playground
-    Editor -->|Cmd+Enter or Run| Preview
-    Files -->|switch| Editor
+/examples/[slug] (Playground)
+├── Header (title, back link, run button)
+└── ShaderPlayground
+    ├── MonacoEditor (left ~50%)
+    └── PreviewCanvas (right ~50%)
 ```
 
-## Completed Work
+## Implementation Plan
 
-### 1. Monaco Editor Setup (Ralph 56)
+### 1. Setup Monaco
 
-- Installed @monaco-editor/react package
-- Created MonacoEditor.tsx wrapper with Cmd+Enter support
+```bash
+cd apps/docs
+pnpm add @monaco-editor/react
+```
 
-### 2. Examples Registry (Ralph 57)
+Create `components/MonacoEditor.tsx`:
 
-- Created lib/examples.ts with ExampleMeta interface
-- Extracted shader code from all 18 examples
-- Helper functions: getExampleBySlug, getExamplesByCategory, getAllCategories
+- Dark theme matching docs
+- Cmd/Ctrl+Enter keyboard binding to trigger run
+- TypeScript language (close enough for WGSL)
 
-### 3. Gallery Page (Ralph 58)
+### 2. Create Examples Registry
 
-- Redesigned with dark theme and category sections
-- ExampleCard component with hover effects
-- Links to /playground/[slug]
+`lib/examples.ts`:
 
-### 4. Playground Page (Ralph 59)
+```typescript
+export interface Example {
+  slug: string;
+  title: string;
+  description: string;
+  shader: string;
+  uniforms?: Record<string, { value: any }>;
+}
 
-- Split layout: Monaco editor (left) + WebGPU preview (right)
-- Preview component that compiles WGSL shaders
-- Run button and error display
-- Dark theme styling
+export const examples: Example[] = [
+  {
+    slug: "gradient",
+    title: "Simple Gradient",
+    description: "Map UV coordinates to colors",
+    shader: `...`,
+  },
+  // ... more examples
+];
 
-### 5. Thumbnail Script (Manual)
+export function getExampleBySlug(slug: string): Example | undefined;
+export function getAllExamples(): Example[];
+```
 
-- Created scripts/generate-thumbnails.ts
-- Uses Playwright to capture screenshots
-- Added generate:thumbnails npm script
+### 3. Gallery Page
 
-## Remaining Work
+Update `app/examples/page.tsx`:
 
-### File Tabs (Pending)
+- Grid layout with example cards
+- Each card shows title, description
+- Links to `/examples/[slug]`
 
-The original request wanted multiple files (HTML and index.ts). Current implementation only edits shader code. This is a lower priority enhancement.
+### 4. Individual Example Pages
 
-## Files Modified/Created
+Create `app/examples/[slug]/page.tsx`:
 
-- apps/examples/components/MonacoEditor.tsx
-- apps/examples/components/Preview.tsx
-- apps/examples/components/ExampleCard.tsx
-- apps/examples/lib/examples.ts
-- apps/examples/app/page.tsx (gallery)
-- apps/examples/app/playground/[slug]/page.tsx
-- apps/examples/app/test-monaco/page.tsx
-- apps/examples/scripts/generate-thumbnails.ts
-- apps/examples/public/thumbnails/ (directory)
+- Load example from registry by slug
+- Full-page ShaderPlayground
+- Header with title and back link
+
+### 5. ShaderPlayground Component
+
+`components/ShaderPlayground.tsx`:
+
+- Props: `example: Example`
+- State: `code`, `activeCode`, `error`
+- Split layout with Monaco + preview canvas
+- Run button + Cmd+Enter shortcut
+- Error display overlay
+
+## Files to Create/Modify
+
+- `apps/docs/package.json` - Add @monaco-editor/react
+- `apps/docs/lib/examples.ts` - Examples registry
+- `apps/docs/components/MonacoEditor.tsx` - Editor wrapper
+- `apps/docs/components/ShaderPlayground.tsx` - Editor + preview
+- `apps/docs/components/ExampleCard.tsx` - Gallery card component
+- `apps/docs/app/examples/page.tsx` - Gallery page
+- `apps/docs/app/examples/[slug]/page.tsx` - Individual playground pages
+
+## Reference
+
+The docs app already has working shader rendering in `app/examples/page.tsx`:
+
+- `ExampleCanvas` component handles WebGPU init, shader compilation, animation loop
+- Can be reused/adapted for the preview side of ShaderPlayground
