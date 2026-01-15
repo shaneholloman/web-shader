@@ -83,7 +83,7 @@ import * as fs from "fs/promises";
 
 // Configuration from environment
 const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY;
-const AGENT_MODEL = process.env.AGENT_MODEL || "anthropic/claude-sonnet-4-20250514";
+const AGENT_MODEL = "google/gemini-3-flash"
 const PROJECT_ROOT = process.env.PROJECT_ROOT || "../..";
 
 if (!AI_GATEWAY_API_KEY) {
@@ -168,7 +168,7 @@ async function main() {
   const startTime = Date.now();
 
   const agent = new LoopAgent({
-    model: "google/gemini-3-flash", // use this one or "anthropic/claude-sonnet-4.5" if gemini didnt solve the isuse the first time
+    model: AGENT_MODEL,
     trace: true,  // Always enable traces
     task: TASK,
     rules: [brainRule, trackProgressRule, minimalChangesRule],
@@ -323,7 +323,7 @@ Include relevant rules in your LoopAgent configuration:
      1. **Reset ALL uncommitted changes**: `git checkout -- . && git clean -fd` (remove all changes from the failed ralph)
      2. **Analyze why it failed**: Check `.ralph-output.log`, `.progress.md`, test output
      3. **Create a NEW ralph** with improved instructions based on learnings
-     4. **Try a different model**: If `google/gemini-3-flash` failed, use `anthropic/claude-sonnet-4-20250514`
+     4. **Try a different model**: If `google/gemini-3-flash` failed, use `anthropic/claude-opus-4.5`
      5. **Never manually fix** the ralph's code - let the new ralph do it with better instructions
 
 ## Best Practices
