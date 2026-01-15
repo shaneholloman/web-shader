@@ -166,6 +166,17 @@ pnpm build
 pnpm test
 \\\`\\\`\\\`
 
+## Completion Criteria
+When ALL acceptance criteria are met:
+1. Update .progress.md to mark all items [x] complete
+2. Call done({ summary: "..." }) IMMEDIATELY
+3. Do NOT re-read files or take more screenshots after this
+
+## Recovery Rules
+- Do NOT delete node_modules or pnpm-lock.yaml
+- If build fails, READ the error and fix the actual issue
+- If stuck after 2-3 attempts on same error, call done() with failure summary
+
 ## 🚨 FIRST ACTION - ALWAYS DO THIS FIRST 🚨
 Your VERY FIRST action must be to check existing progress and what already exists.
 Based on what already exists, SKIP completed tasks and proceed to the next incomplete one.
@@ -189,9 +200,9 @@ async function main() {
     rules: [brainRule, trackProgressRule, minimalChangesRule, completionRule, visualCheckRule, processManagementRule],
     debug: DEBUG,
     limits: {
-      maxIterations: 30,
-      maxCost: 15.0,
-      timeout: "60m",
+      maxIterations: 15,  // Keep low to catch infinite loops early
+      maxCost: 5.0,       // Start conservative, increase if needed
+      timeout: "20m",
     },
     onUpdate: (status) => {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -412,6 +423,16 @@ After visual verification passes (screenshot shows UI working, no errors):
 
 These patterns cause ralphs to waste tokens and get stuck in loops:
 
+### 0. Scope Creep / Too Many Tasks
+
+**Problem**: TASK asks agent to do too much (e.g., "extract shader code from ALL 18 examples")
+**Solution**: Keep tasks focused and small. Start with 3-4 items, verify they work, then expand in a follow-up ralph.
+
+```
+❌ Bad: "Create registry with ALL 18 examples"
+✅ Good: "Create registry with 3-4 examples (basic, uniforms, raymarching)"
+```
+
 ### 1. Re-Verification Loop
 
 **Problem**: Agent keeps re-verifying completed work instead of calling `done()`
@@ -448,6 +469,31 @@ Iter 2: Verify UI → works → doesn't call done
 ## When to call done()
 If .progress.md shows ALL items [x] complete AND visual verification passed:
 → Call done({ summary: "..." }) IMMEDIATELY
+```
+
+### 6. Destructive Recovery Attempts
+
+**Problem**: Agent encounters a build error and tries to "fix" it by deleting `node_modules`, `pnpm-lock.yaml`, or other critical files
+**Solution**: TASK should explicitly state:
+
+```
+## Recovery Rules
+- Do NOT delete node_modules or pnpm-lock.yaml
+- Do NOT run pnpm store prune
+- If build fails, READ the error message and fix the actual issue
+- If stuck on a build error after 2 attempts, call done() with failure summary
+```
+
+### 7. Over-Engineering Solutions
+
+**Problem**: Agent writes complex custom scripts (e.g., Playwright test files) when simpler approaches work
+**Solution**: TASK should emphasize simplicity:
+
+```
+## Approach
+- Prefer simple inline commands over custom scripts
+- Use built-in browser tools (openBrowser, screenshot) instead of writing Playwright scripts
+- If the built-in tools work, don't create additional verification scripts
 ```
 
 ## CRITICAL: Orchestrator Agent Rules
