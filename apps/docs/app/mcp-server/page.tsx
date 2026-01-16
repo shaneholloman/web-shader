@@ -2,7 +2,7 @@ import { CodeBlock } from '@/components/mdx/CodeBlock';
 
 // Generate the Cursor deeplink URL
 const MCP_CONFIG = {
-  url: "https://ralph-gpu.vercel.app/mcp/mcp"
+  url: "https://ralph-gpu.labs.vercel.dev/mcp/mcp"
 };
 const CONFIG_BASE64 = Buffer.from(JSON.stringify(MCP_CONFIG)).toString('base64');
 const CURSOR_DEEPLINK = `cursor://anysphere.cursor-deeplink/mcp/install?name=ralph-gpu-docs&config=${CONFIG_BASE64}`;
@@ -10,15 +10,7 @@ const CURSOR_DEEPLINK = `cursor://anysphere.cursor-deeplink/mcp/install?name=ral
 const configCode = `{
   "mcpServers": {
     "ralph-gpu-docs": {
-      "url": "https://ralph-gpu.vercel.app/mcp/mcp"
-    }
-  }
-}`;
-
-const localConfigCode = `{
-  "mcpServers": {
-    "ralph-gpu-docs": {
-      "url": "http://localhost:3001/mcp/mcp"
+      "url": "https://ralph-gpu.labs.vercel.dev/mcp/mcp"
     }
   }
 }`;
@@ -57,14 +49,6 @@ export default function McpServerPage() {
         <CodeBlock language="json" title=".cursor/mcp.json">
           {configCode}
         </CodeBlock>
-        
-        <div className="mt-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
-          <p className="text-blue-400 text-sm font-medium mb-2">Local Development</p>
-          <p className="text-gray-11 text-sm mb-3">For local development, use the local URL instead:</p>
-          <CodeBlock language="json">
-            {localConfigCode}
-          </CodeBlock>
-        </div>
       </section>
 
       {/* What is MCP */}
@@ -75,7 +59,11 @@ export default function McpServerPage() {
         <p className="text-gray-11 mb-4">
           The Model Context Protocol (MCP) is an open standard that allows AI assistants to access external tools and data sources. With the ralph-gpu MCP server, your AI can:
         </p>
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-3 gap-4">
+          <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
+            <h3 className="font-semibold text-gray-12 mb-2">Quick Start Guide</h3>
+            <p className="text-gray-9 text-sm">Get a comprehensive guide with all patterns and best practices.</p>
+          </div>
           <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
             <h3 className="font-semibold text-gray-12 mb-2">Access Documentation</h3>
             <p className="text-gray-9 text-sm">Get complete API reference, concepts, and getting started guides.</p>
@@ -83,14 +71,6 @@ export default function McpServerPage() {
           <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
             <h3 className="font-semibold text-gray-12 mb-2">Browse Examples</h3>
             <p className="text-gray-9 text-sm">List and retrieve full code for all shader examples.</p>
-          </div>
-          <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
-            <h3 className="font-semibold text-gray-12 mb-2">Search Content</h3>
-            <p className="text-gray-9 text-sm">Find specific topics across all documentation.</p>
-          </div>
-          <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
-            <h3 className="font-semibold text-gray-12 mb-2">Quick Start Guide</h3>
-            <p className="text-gray-9 text-sm">Get a comprehensive guide with all patterns and best practices.</p>
           </div>
         </div>
       </section>
@@ -120,11 +100,6 @@ export default function McpServerPage() {
             <code className="text-blue-400 font-mono text-sm">get_example</code>
             <span className="text-gray-10 text-sm ml-2">slug: string</span>
             <p className="text-gray-9 text-sm mt-1">Get full code and shader for a specific example.</p>
-          </div>
-          <div className="p-4 rounded-lg bg-gray-1 border border-gray-4">
-            <code className="text-blue-400 font-mono text-sm">search_docs</code>
-            <span className="text-gray-10 text-sm ml-2">query: string</span>
-            <p className="text-gray-9 text-sm mt-1">Search documentation for relevant sections by keyword.</p>
           </div>
         </div>
       </section>

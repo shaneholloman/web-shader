@@ -1,7 +1,7 @@
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 import { getAllExamples, getExampleBySlug } from "@/lib/examples";
-import { getQuickstartGuide, getDocContent, searchDocs } from "@/lib/mcp/docs-content";
+import { getQuickstartGuide, getDocContent } from "@/lib/mcp/docs-content";
 
 const handler = createMcpHandler(
   (server) => {
@@ -85,26 +85,6 @@ const handler = createMcpHandler(
         }
         return {
           content: [{ type: "text", text: JSON.stringify(example, null, 2) }],
-        };
-      }
-    );
-
-    // Tool 5: search_docs
-    server.registerTool(
-      "search_docs",
-      {
-        title: "Search Documentation",
-        description: "Search ralph-gpu documentation for relevant sections by keyword. Useful for finding specific API methods, concepts, or usage patterns.",
-        inputSchema: {
-          query: z.string().describe(
-            "Search query (e.g., 'compute shader', 'ping pong', 'uniforms', 'blend modes')"
-          ),
-        },
-      },
-      async ({ query }) => {
-        const results = searchDocs(query);
-        return {
-          content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
         };
       }
     );

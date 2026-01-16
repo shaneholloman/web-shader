@@ -393,7 +393,7 @@ import { Callout } from "@/components/mdx/Callout";
 
 // Generate the Cursor deeplink URL
 const MCP_CONFIG = {
-  url: "https://ralph-gpu.vercel.app/api/mcp/mcp",
+  url: "https://ralph-gpu.labs.vercel.dev/api/mcp/mcp",
 };
 const CONFIG_BASE64 = Buffer.from(JSON.stringify(MCP_CONFIG)).toString(
   "base64"
@@ -403,7 +403,7 @@ const CURSOR_DEEPLINK = `cursor://anysphere.cursor-deeplink/mcp/install?name=ral
 const manualConfigCode = `{
   "mcpServers": {
     "ralph-gpu-docs": {
-      "url": "https://ralph-gpu.vercel.app/api/mcp/mcp"
+      "url": "https://ralph-gpu.labs.vercel.dev/api/mcp/mcp"
     }
   }
 }`;
@@ -727,7 +727,7 @@ cursor://anysphere.cursor-deeplink/mcp/install?name=$NAME&config=$BASE64_ENCODED
 For ralph-gpu-docs:
 
 - **Name:** `ralph-gpu-docs`
-- **Config:** `{ "url": "https://ralph-gpu.vercel.app/api/mcp/mcp" }`
+- **Config:** `{ "url": "https://ralph-gpu.labs.vercel.dev/api/mcp/mcp" }`
 - **Base64 Config:** `eyJ1cmwiOiJodHRwczovL3JhbHBoLWdwdS52ZXJjZWwuYXBwL2FwaS9tY3AvbWNwIn0=`
 
 Full deeplink:
