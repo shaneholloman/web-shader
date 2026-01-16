@@ -6,8 +6,7 @@ import * as http from 'http';
 import { PNG } from 'pngjs';
 
 async function generatePreviews() {
-  const _examples = getAllExamples();
-  const examples = [_examples[0]]
+  const examples = getAllExamples();
   const outputDir = path.join(__dirname, '../public/examples');
   
   // Ensure output directory exists
@@ -62,10 +61,11 @@ async function generatePreviews() {
     console.log(`Generating preview for: ${example.slug}`);
     
     try {
-      // Get code for this example
-      let code = example.executable ? example.code : '';
-      if (!example.executable && example.shader) {
-        // This shouldn't happen anymore - all examples should have code
+      // Get code for this example - all examples now have code property
+      let code = example.code;
+      
+      if (!code && example.shader) {
+        // Fallback for examples that only have shader (shouldn't happen anymore)
         console.warn(`Example ${example.slug} missing code, using shader fallback`);
         code = `
 const ctx = await gpu.init(canvas, { dpr: 1, autoResize: true });
@@ -73,7 +73,7 @@ const pass = ctx.pass(\`${example.shader.replace(/`/g, '\\`')}\`${example.unifor
 
 function frame() {
   pass.draw();
-  ${example.animated ? 'requestAnimationFrame(frame);' : ''}
+  requestAnimationFrame(frame);
 }
 frame();
         `;
@@ -92,9 +92,11 @@ frame();
       });
       
       // Wait for rendering (longer for complex examples)
-      const isComplex = example.slug === 'fluid' || example.slug === 'alien-planet' || example.slug === examples[0].slug;
-      await page.waitForTimeout(isComplex ? 5000 : (example.animated ? 3000 : 1500));
-      await page.waitForTimeout(5);
+      const isComplex = example.slug === 'fluid' || example.slug === 'alien-planet' || example.slug === "triangle-particles";
+      if(isComplex) {
+        await page.waitForTimeout(3000)
+      }
+      await page.waitForTimeout(example.animated ? 6000 : 1000);
       
       // Screenshot the canvas
       const canvas = await page.$('canvas');
