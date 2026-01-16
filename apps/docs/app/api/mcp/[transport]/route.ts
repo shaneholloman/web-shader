@@ -6,10 +6,13 @@ import { getQuickstartGuide, getDocContent, searchDocs } from "@/lib/mcp/docs-co
 const handler = createMcpHandler(
   (server) => {
     // Tool 1: get_started - comprehensive quickstart guide
-    server.tool(
+    server.registerTool(
       "get_started",
-      "Get the comprehensive ralph-gpu quickstart guide. This is the RECOMMENDED first tool to call - it contains all patterns, code examples, API usage, and best practices in a single document. Perfect for LLMs to understand the library quickly.",
-      {},
+      {
+        title: "Get Started Guide",
+        description: "Get the comprehensive ralph-gpu quickstart guide. This is the RECOMMENDED first tool to call - it contains all patterns, code examples, API usage, and best practices in a single document. Perfect for LLMs to understand the library quickly.",
+        inputSchema: {},
+      },
       async () => {
         const content = getQuickstartGuide();
         return {
@@ -19,13 +22,16 @@ const handler = createMcpHandler(
     );
 
     // Tool 2: get_documentation
-    server.tool(
+    server.registerTool(
       "get_documentation",
-      "Get ralph-gpu documentation for a specific topic. Returns comprehensive markdown documentation.",
       {
-        topic: z.enum(["getting-started", "concepts", "api"]).describe(
-          "The documentation topic: 'getting-started' for installation and setup, 'concepts' for core abstractions, 'api' for complete API reference"
-        ),
+        title: "Get Documentation",
+        description: "Get ralph-gpu documentation for a specific topic. Returns comprehensive markdown documentation.",
+        inputSchema: {
+          topic: z.enum(["getting-started", "concepts", "api"]).describe(
+            "The documentation topic: 'getting-started' for installation and setup, 'concepts' for core abstractions, 'api' for complete API reference"
+          ),
+        },
       },
       async ({ topic }) => {
         const content = getDocContent(topic);
@@ -36,10 +42,13 @@ const handler = createMcpHandler(
     );
 
     // Tool 3: list_examples
-    server.tool(
+    server.registerTool(
       "list_examples",
-      "List all available ralph-gpu examples with their metadata. Use this to discover what examples are available before fetching specific ones.",
-      {},
+      {
+        title: "List Examples",
+        description: "List all available ralph-gpu examples with their metadata. Use this to discover what examples are available before fetching specific ones.",
+        inputSchema: {},
+      },
       async () => {
         const examples = getAllExamples();
         const list = examples.map((e) => ({
@@ -55,13 +64,16 @@ const handler = createMcpHandler(
     );
 
     // Tool 4: get_example
-    server.tool(
+    server.registerTool(
       "get_example",
-      "Get the full code and details for a specific ralph-gpu example. Returns the complete shader code and JavaScript/TypeScript implementation.",
       {
-        slug: z.string().describe(
-          "The example slug (e.g., 'gradient', 'fluid', 'raymarching', 'triangle-particles')"
-        ),
+        title: "Get Example",
+        description: "Get the full code and details for a specific ralph-gpu example. Returns the complete shader code and JavaScript/TypeScript implementation.",
+        inputSchema: {
+          slug: z.string().describe(
+            "The example slug (e.g., 'gradient', 'fluid', 'raymarching', 'triangle-particles')"
+          ),
+        },
       },
       async ({ slug }) => {
         const example = getExampleBySlug(slug);
@@ -78,13 +90,16 @@ const handler = createMcpHandler(
     );
 
     // Tool 5: search_docs
-    server.tool(
+    server.registerTool(
       "search_docs",
-      "Search ralph-gpu documentation for relevant sections by keyword. Useful for finding specific API methods, concepts, or usage patterns.",
       {
-        query: z.string().describe(
-          "Search query (e.g., 'compute shader', 'ping pong', 'uniforms', 'blend modes')"
-        ),
+        title: "Search Documentation",
+        description: "Search ralph-gpu documentation for relevant sections by keyword. Useful for finding specific API methods, concepts, or usage patterns.",
+        inputSchema: {
+          query: z.string().describe(
+            "Search query (e.g., 'compute shader', 'ping pong', 'uniforms', 'blend modes')"
+          ),
+        },
       },
       async ({ query }) => {
         const results = searchDocs(query);
@@ -93,6 +108,12 @@ const handler = createMcpHandler(
         };
       }
     );
+  },
+  {},
+  {
+    basePath: "/api/mcp",
+    maxDuration: 60,
+    verboseLogs: process.env.NODE_ENV === "development",
   }
 );
 
