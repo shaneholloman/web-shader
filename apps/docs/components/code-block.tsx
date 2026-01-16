@@ -70,7 +70,7 @@ export async function CodeBlock({
             {/* Code */}
             <div className="flex-1 py-4 px-4 overflow-x-auto">
               <div 
-                className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent"
+                className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent [&_code]:!text-sm [&_code]:!leading-6 [&_code_span.line]:!leading-6"
                 dangerouslySetInnerHTML={{ __html: highlightedHtml }}
               />
             </div>
