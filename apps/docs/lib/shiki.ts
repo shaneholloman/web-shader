@@ -14,8 +14,12 @@ export async function getHighlighter() {
 
 export async function highlightCode(code: string, language: string): Promise<string> {
   const highlighter = await getHighlighter();
-  return highlighter.codeToHtml(code.trim(), {
+  const html = highlighter.codeToHtml(code.trim(), {
     lang: language,
     theme: 'github-dark',
   });
+  
+  // Fix empty lines that Shiki renders as empty spans with no content
+  // Replace empty spans with spans containing a non-breaking space
+  return html.replace(/<span class="line"><\/span>/g, '<span class="line">&nbsp;</span>');
 }
