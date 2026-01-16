@@ -2,6 +2,8 @@ import { chromium } from 'playwright';
 import { getAllExamples } from '../lib/examples';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as http from 'http';
+import { PNG } from 'pngjs';
 
 async function generatePreviews() {
   const examples = getAllExamples();
@@ -12,42 +14,125 @@ async function generatePreviews() {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
+  // Read template and ralph-gpu bundle
+  const templatePath = path.join(__dirname, 'preview-template.html');
+  const template = fs.readFileSync(templatePath, 'utf-8');
+  const ralphGpuPath = path.join(__dirname, '../public/ralph-gpu.mjs');
+  const ralphGpu = fs.readFileSync(ralphGpuPath, 'utf-8');
   
-  // Set viewport for consistent screenshots
-  await page.setViewportSize({ width: 800, height: 450 });
+  let currentHtml = '';
+  
+  // Simple HTTP server
+  const server = http.createServer((req, res) => {
+    if (req.url === '/ralph-gpu.mjs') {
+      res.writeHead(200, { 'Content-Type': 'application/javascript' });
+      res.end(ralphGpu);
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(currentHtml);
+    }
+  });
+  
+  await new Promise<void>((resolve) => {
+    server.listen(9999, () => {
+      console.log('Preview server running on http://localhost:9999');
+      resolve();
+    });
+  });
+
+  const browser = await chromium.launch({
+    headless: false, // WebGPU canvas rendering requires headed mode
+    args: [
+      '--enable-unsafe-webgpu',
+    ],
+  });
+  const context = await browser.newContext({
+    viewport: { width: 800, height: 450 },
+  });
+  const page = await context.newPage();
+  
+  // Capture all console messages
+  page.on('console', msg => {
+    console.log(`[Browser ${msg.type()}]:`, msg.text());
+  });
+  
 
   for (const example of examples) {
     console.log(`Generating preview for: ${example.slug}`);
     
     try {
-      await page.goto(`http://localhost:3001/examples/${example.slug}`, {
-        waitUntil: 'networkidle'
+      // Get code for this example
+      let code = example.executable ? example.code : '';
+      if (!example.executable && example.shader) {
+        // Generate runtime code for shader examples
+        code = `
+const ctx = await gpu.init(canvas, { dpr: 1 });
+const pass = ctx.pass(\`${example.shader.replace(/`/g, '\\`')}\`${example.uniforms ? `, { uniforms: ${JSON.stringify(example.uniforms)} }` : ''});
+
+const onResize = () => {
+  const rect = canvas.getBoundingClientRect();
+  ctx.resize(rect.width, rect.height);
+};
+window.addEventListener('resize', onResize);
+onResize();
+
+function frame() {
+  pass.draw();
+  ${example.animated ? 'requestAnimationFrame(frame);' : ''}
+}
+frame();
+        `;
+      }
+      
+      // Strip import statement
+      code = code.replace(/import\s+\{[^}]+\}\s+from\s+['"][^'"]+['"];?\s*/g, '');
+      
+      // Inject code into template
+      currentHtml = template.replace('// CODE_PLACEHOLDER', code);
+      
+      // Navigate to the server
+      await page.goto('http://localhost:9999', {
+        waitUntil: 'load',
+        timeout: 60000
       });
       
-      // Wait for canvas to render
-      await page.waitForTimeout(1000);
+      // Wait for rendering (longer for complex examples)
+      const isComplex = example.slug === 'fluid' || example.slug === 'alien-planet';
+      await page.waitForTimeout(isComplex ? 5000 : (example.animated ? 3000 : 1500));
       
-      // Take screenshot of the preview area
-      const previewArea = await page.locator('.bg-black').first();
-      if (await previewArea.isVisible()) {
-        await previewArea.screenshot({
-          path: path.join(outputDir, `${example.slug}.png`)
-        });
-      } else {
-        // Fallback to full page
-        await page.screenshot({
-          path: path.join(outputDir, `${example.slug}.png`),
-          clip: { x: 0, y: 200, width: 800, height: 400 }
-        });
+      // Screenshot the canvas
+      const canvas = await page.$('canvas');
+      if (!canvas) {
+        console.error(`  ✗ No canvas found for ${example.slug}`);
+        continue;
       }
+      
+      const screenshotPath = path.join(outputDir, `${example.slug}.png`);
+      const buffer = await canvas.screenshot({ path: screenshotPath });
+      
+      // Verify the screenshot has content
+      const png = PNG.sync.read(buffer);
+      let nonBlackPixels = 0;
+      
+      for (let i = 0; i < png.data.length; i += 4) {
+        const r = png.data[i];
+        const g = png.data[i + 1];
+        const b = png.data[i + 2];
+        
+        if (r !== 0 || g !== 0 || b !== 0) {
+          nonBlackPixels++;
+        }
+      }
+      
+      const percentNonBlack = (nonBlackPixels / (png.data.length / 4) * 100).toFixed(1);
+      console.log(`  ✓ Saved ${example.slug}.png (${percentNonBlack}% non-black)`);
     } catch (error) {
       console.error(`Failed to generate preview for ${example.slug}:`, error);
     }
   }
 
   await browser.close();
+  server.close();
   console.log('Done generating previews!');
 }
 

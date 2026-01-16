@@ -411,41 +411,40 @@ frame();
   {
     slug: 'fractal',
     title: 'Mandelbrot Set',
-    description: 'The classic complex number fractal. This shader computes the set by iterating z = z² + c and mapping the escape time to colors.',
+    description: 'The classic complex number fractal. This shader computes the set by iterating z = z² + c and mapping the escape time to vibrant colors.',
     shader: `
 @fragment
 fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = (pos.xy - globals.resolution * 0.5) / globals.resolution.y;
   
-  // Zoom and pan
-  let zoom = pow(0.5, sin(globals.time * 0.2) * 5.0 + 5.0);
-  let c = uv * zoom * 2.0 - vec2f(0.5, 0.0);
+  // Zoom around interesting area
+  let zoom = 1.5;
+  let c = uv * zoom + vec2f(-0.7, 0.0);
   
   var z = vec2f(0.0);
   var iter = 0;
   let max_iter = 100;
   
   for (var i = 0; i < max_iter; i++) {
-    // z = z^2 + c
     z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
-    if (length(z) > 2.0) {
+    if (dot(z, z) > 4.0) {
       break;
     }
     iter = i;
   }
   
   if (iter == max_iter - 1) {
-    return vec4f(0.0, 0.0, 0.0, 1.0);
+    return vec4f(0.0, 0.0, 0.05, 1.0);
   }
   
   let t = f32(iter) / f32(max_iter);
   let col = vec3f(
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 0.0),
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 0.6),
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 1.0)
+    0.5 + 0.5 * sin(t * 10.0 + globals.time * 0.5),
+    0.5 + 0.5 * sin(t * 10.0 + 2.0 + globals.time * 0.3),
+    0.5 + 0.5 * sin(t * 10.0 + 4.0 + globals.time * 0.4)
   );
   
-  return vec4f(col, 1.0);
+  return vec4f(col * 1.2, 1.0);
 }
 `,
     code: `import { gpu } from 'ralph-gpu';
@@ -454,41 +453,40 @@ fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 const canvas = document.getElementById('canvas');
 const ctx = await gpu.init(canvas);
 
-// Create a fractal pass
+// Create a fractal pass that explores the Mandelbrot set
 const fractal = ctx.pass(\`
 @fragment
 fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = (pos.xy - globals.resolution * 0.5) / globals.resolution.y;
   
-  // Zoom and pan
-  let zoom = pow(0.5, sin(globals.time * 0.2) * 5.0 + 5.0);
-  let c = uv * zoom * 2.0 - vec2f(0.5, 0.0);
+  // Zoom around interesting area
+  let zoom = 1.5;
+  let c = uv * zoom + vec2f(-0.7, 0.0);
   
   var z = vec2f(0.0);
   var iter = 0;
   let max_iter = 100;
   
   for (var i = 0; i < max_iter; i++) {
-    // z = z^2 + c
     z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
-    if (length(z) > 2.0) {
+    if (dot(z, z) > 4.0) {
       break;
     }
     iter = i;
   }
   
   if (iter == max_iter - 1) {
-    return vec4f(0.0, 0.0, 0.0, 1.0);
+    return vec4f(0.0, 0.0, 0.05, 1.0);
   }
   
   let t = f32(iter) / f32(max_iter);
   let col = vec3f(
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 0.0),
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 0.6),
-    0.5 + 0.5 * sin(3.0 + t * 10.0 + 1.0)
+    0.5 + 0.5 * sin(t * 10.0 + globals.time * 0.5),
+    0.5 + 0.5 * sin(t * 10.0 + 2.0 + globals.time * 0.3),
+    0.5 + 0.5 * sin(t * 10.0 + 4.0 + globals.time * 0.4)
   );
   
-  return vec4f(col, 1.0);
+  return vec4f(col * 1.2, 1.0);
 }
 \`);
 
@@ -713,10 +711,19 @@ const alienPlanet = ctx.pass(\`
 const MAX_STEPS: i32 = 100;
 const MAX_DIST: f32 = 200.0;
 const SURF_DIST: f32 = 0.001;
+const PI: f32 = 3.14159265359;
 const PLANET_RADIUS: f32 = 8.0;
 const PLANET_POS: vec3f = vec3f(0.0, 0.0, 30.0);
+const ATMOSPHERE_RADIUS: f32 = 9.5;
 const RING_INNER: f32 = 11.0;
 const RING_OUTER: f32 = 16.0;
+const MOON_RADIUS: f32 = 1.2;
+
+fn hash21(p: vec2f) -> f32 {
+  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
 
 fn hash31(p: vec3f) -> f32 {
   var p3 = fract(p * 0.1031);
@@ -724,44 +731,178 @@ fn hash31(p: vec3f) -> f32 {
   return fract((p3.x + p3.y) * p3.z);
 }
 
+fn hash33(p: vec3f) -> vec3f {
+  var p3 = fract(p * vec3f(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yxz + 33.33);
+  return fract((p3.xxy + p3.yxx) * p3.zyx);
+}
+
 fn noise3D(p: vec3f) -> f32 {
   let i = floor(p); let f = fract(p);
   let u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(hash31(i), hash31(i + vec3f(1,0,0)), u.x),
-    mix(hash31(i + vec3f(0,1,0)), hash31(i + vec3f(1,1,0)), u.x), u.y),
-    mix(mix(hash31(i + vec3f(0,0,1)), hash31(i + vec3f(1,0,1)), u.x),
-    mix(hash31(i + vec3f(0,1,1)), hash31(i + vec3f(1,1,1)), u.x), u.y), u.z);
+  return mix(mix(mix(hash31(i), hash31(i + vec3f(1.0, 0.0, 0.0)), u.x),
+    mix(hash31(i + vec3f(0.0, 1.0, 0.0)), hash31(i + vec3f(1.0, 1.0, 0.0)), u.x), u.y),
+    mix(mix(hash31(i + vec3f(0.0, 0.0, 1.0)), hash31(i + vec3f(1.0, 0.0, 1.0)), u.x),
+    mix(hash31(i + vec3f(0.0, 1.0, 1.0)), hash31(i + vec3f(1.0, 1.0, 1.0)), u.x), u.y), u.z);
 }
 
 fn fbm(p: vec3f) -> f32 {
-  var v = 0.0; var a = 0.5; var pos = p;
+  var v: f32 = 0.0; var a: f32 = 0.5; var pos = p;
   for (var i = 0; i < 5; i++) { v += a * noise3D(pos); a *= 0.5; pos *= 2.0; }
   return v;
 }
 
 fn sdPlanet(p: vec3f) -> f32 {
   let lp = p - PLANET_POS;
-  return length(lp) - PLANET_RADIUS - fbm(normalize(lp) * 8.0) * 0.3;
+  let base = length(lp) - PLANET_RADIUS;
+  let noise = fbm(normalize(lp) * 8.0) * 0.3;
+  let crater = pow(fbm(normalize(lp) * 4.0 + 10.0), 2.0) * 0.2;
+  return base - noise + crater;
 }
 
 fn sdRings(p: vec3f) -> f32 {
   let lp = p - PLANET_POS;
   let c = cos(0.3); let s = sin(0.3);
   let tp = vec3f(lp.x, lp.y * c - lp.z * s, lp.y * s + lp.z * c);
-  let d = length(tp.xz);
-  if (d < RING_INNER || d > RING_OUTER) { return 200.0; }
+  let dist = length(tp.xz);
+  if (dist < RING_INNER || dist > RING_OUTER) { return MAX_DIST; }
   return abs(tp.y) - 0.05;
 }
 
-// ... see full shader in preview
+fn getMoonPos(time: f32) -> vec3f {
+  return PLANET_POS + vec3f(cos(time * 0.15) * 14.0, sin(time * 0.1) * 4.0, sin(time * 0.15) * 12.0);
+}
+
+fn sdMoon(p: vec3f, time: f32) -> f32 {
+  let lp = p - getMoonPos(time);
+  return length(lp) - MOON_RADIUS - fbm(normalize(lp) * 6.0) * 0.08;
+}
+
+struct Hit { dist: f32, mat: i32 }
+
+fn map(p: vec3f, time: f32) -> Hit {
+  var h: Hit; h.dist = MAX_DIST; h.mat = 0;
+  let pd = sdPlanet(p); if (pd < h.dist) { h.dist = pd; h.mat = 1; }
+  let rd = sdRings(p); if (rd < h.dist) { h.dist = rd; h.mat = 2; }
+  let md = sdMoon(p, time); if (md < h.dist) { h.dist = md; h.mat = 3; }
+  return h;
+}
+
+fn calcNormal(p: vec3f, time: f32) -> vec3f {
+  let e = vec2f(0.001, 0.0);
+  return normalize(vec3f(map(p + e.xyy, time).dist - map(p - e.xyy, time).dist,
+    map(p + e.yxy, time).dist - map(p - e.yxy, time).dist,
+    map(p + e.yyx, time).dist - map(p - e.yyx, time).dist));
+}
+
+fn stars(rd: vec3f, time: f32) -> vec3f {
+  var col = vec3f(0.0);
+  let g1 = floor(rd * 100.0); let h1 = hash31(g1);
+  if (h1 > 0.97) {
+    let sc = (g1 + 0.5) / 100.0;
+    let d = length(rd - normalize(sc)) * 100.0;
+    col += smoothstep(1.5, 0.0, d) * (sin(time * 3.0 + h1 * 100.0) * 0.3 + 0.7) * 0.5;
+  }
+  let g2 = floor(rd * 50.0); let h2 = hash31(g2 + 100.0);
+  if (h2 > 0.99) {
+    let sc = (g2 + 0.5) / 50.0;
+    let d = length(rd - normalize(sc)) * 50.0;
+    let cv = hash33(g2);
+    col += mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), cv.x) * smoothstep(2.0, 0.0, d);
+  }
+  return col;
+}
+
+fn atmosphere(ro: vec3f, rd: vec3f) -> vec3f {
+  let oc = ro - PLANET_POS; let b = dot(oc, rd); let c = dot(oc, oc) - ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
+  let h = b * b - c; if (h < 0.0) { return vec3f(0.0); }
+  let t1 = max(-b - sqrt(h), 0.0); let t2 = -b + sqrt(h); if (t2 < 0.0) { return vec3f(0.0); }
+  var scatter = vec3f(0.0); let step = (t2 - t1) / 8.0;
+  for (var i = 0; i < 8; i++) {
+    let t = t1 + (f32(i) + 0.5) * step;
+    let sp = ro + rd * t;
+    let alt = (length(sp - PLANET_POS) - PLANET_RADIUS) / (ATMOSPHERE_RADIUS - PLANET_RADIUS);
+    let den = exp(-alt * 4.0);
+    scatter += (vec3f(0.2, 0.5, 1.0) + vec3f(1.0, 0.4, 0.2) * 0.3) * den * step * 0.15;
+  }
+  return scatter;
+}
+
+fn getPlanetColor(p: vec3f, time: f32) -> vec3f {
+  let lp = p - PLANET_POS; let sc = normalize(lp);
+  let n1 = fbm(sc * 4.0); let n2 = fbm(sc * 8.0 + 10.0);
+  var col = mix(vec3f(0.6, 0.2, 0.4), vec3f(0.2, 0.5, 0.4), n1);
+  col = mix(col, vec3f(0.8, 0.6, 0.3), n2 * 0.5);
+  let polar = abs(sc.y);
+  if (polar > 0.7) { col = mix(col, vec3f(0.7, 0.8, 0.9), smoothstep(0.7, 0.9, polar)); }
+  let bio = fbm(sc * 12.0 + time * 0.05);
+  if (bio > 0.65) { col += vec3f(0.2, 1.0, 0.6) * (bio - 0.65) * 0.5; }
+  return col;
+}
+
+fn getRingColor(p: vec3f) -> vec3f {
+  let lp = p - PLANET_POS; let d = length(lp.xz);
+  let pat = sin(d * 8.0) * 0.5 + 0.5;
+  let n = hash21(vec2f(d * 10.0, atan2(lp.x, lp.z) * 5.0));
+  var col = mix(vec3f(0.8, 0.7, 0.6), vec3f(0.4, 0.35, 0.3), pat) * (0.5 + n * 0.5);
+  if (sin(d * 30.0) > 0.7) { col *= 0.3; }
+  return col;
+}
+
 @fragment
 fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   var uv = (fc.xy - 0.5 * globals.resolution) / globals.resolution.y;
   uv.y = -uv.y;
-  // Camera orbits around planet...
-  // Raymarch planet, rings, moon...
-  // Atmospheric scattering, stars, god rays...
-  return vec4f(1.0);
+  let time = globals.time;
+  let camDist = 50.0 - time * 0.5; let camAngle = time * 0.05;
+  let ro = vec3f(sin(camAngle) * 15.0, sin(time * 0.1) * 3.0 + 5.0, camDist);
+  let forward = normalize(PLANET_POS - ro);
+  let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
+  let up = cross(forward, right);
+  let rd = normalize(forward + uv.x * right + uv.y * up);
+  let sunDir = normalize(vec3f(0.5, 0.3, -1.0));
+  
+  var col = stars(rd, time);
+  col += pow(max(dot(rd, sunDir), 0.0), 256.0) * 2.0 * vec3f(1.0, 0.9, 0.7);
+  col += pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.3 * vec3f(1.0, 0.9, 0.7);
+  
+  let nc = rd * 2.0;
+  let neb1 = fbm(nc + vec3f(0.0, 0.0, time * 0.01));
+  let neb2 = fbm(nc * 2.0 + vec3f(100.0, 0.0, time * 0.02));
+  col += mix(vec3f(0.1, 0.0, 0.15), vec3f(0.0, 0.1, 0.2), neb1) * neb2 * 0.15;
+  
+  var t: f32 = 0.0; var hit: Hit; hit.mat = 0;
+  for (var i = 0; i < MAX_STEPS; i++) {
+    let p = ro + rd * t; let h = map(p, time);
+    if (h.dist < SURF_DIST) { hit = h; break; }
+    if (t > MAX_DIST) { break; }
+    t += h.dist * 0.8;
+  }
+  
+  if (hit.mat > 0) {
+    let p = ro + rd * t; let n = calcNormal(p, time);
+    var mc = vec3f(0.5);
+    if (hit.mat == 1) { mc = getPlanetColor(p, time); }
+    else if (hit.mat == 2) { mc = getRingColor(p); }
+    else if (hit.mat == 3) { mc = vec3f(0.5, 0.5, 0.55) * fbm(n * 8.0); }
+    
+    let diff = max(dot(n, sunDir), 0.0);
+    let vd = normalize(ro - p);
+    let hd = normalize(sunDir + vd);
+    let spec = pow(max(dot(n, hd), 0.0), 32.0);
+    let fres = pow(1.0 - max(dot(vd, n), 0.0), 4.0);
+    
+    var sc = vec3f(0.02, 0.03, 0.05) * mc + mc * vec3f(1.0, 0.95, 0.9) * diff + vec3f(1.0, 0.9, 0.8) * spec * 0.3;
+    if (hit.mat == 1) { sc += vec3f(0.3, 0.5, 1.0) * fres * 0.5; }
+    if (hit.mat == 2) { col = mix(col, sc, 0.7); } else { col = sc; }
+  }
+  
+  col += atmosphere(ro, rd);
+  col = col / (col + vec3f(1.0));
+  col = pow(col, vec3f(0.95, 1.0, 1.05));
+  col = pow(col, vec3f(1.0 / 2.2));
+  col *= 1.0 - 0.3 * length(uv);
+  return vec4f(col, 1.0);
 }
 \`);
 
