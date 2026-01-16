@@ -19,6 +19,8 @@ const navItems = [
       { href: '/api', label: 'API Reference' },
       { href: '/profiler', label: 'Profiler & Debug' },
       { href: '/examples', label: 'Examples' },
+      { href: '/mcp-server', label: 'MCP Server' },
+      { href: '/llms.txt', label: 'llms.txt' },
     ]
   }
 ];
@@ -31,7 +33,7 @@ export function Navigation() {
     <>
       {/* Mobile menu button */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md bg-gray-2 border border-gray-4 text-gray-12 hover:bg-gray-1 transition-colors"
+        className="lg:hidden fixed top-4 right-4 z-50 p-2 rounded-md bg-gray-2 border border-gray-4 text-gray-12 hover:bg-gray-1 transition-colors"
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
         aria-label="Toggle menu"
       >

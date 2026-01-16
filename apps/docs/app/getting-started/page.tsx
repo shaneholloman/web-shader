@@ -179,21 +179,21 @@ export default function GettingStartedPage() {
         <p className="text-gray-11 mb-4">
           Let&apos;s create a simple animated gradient shader. This demonstrates the basics of creating a pass and running an animation loop:
         </p>
-        <CodeBlock code={firstShaderCode} language="typescript" />
+        <CodeBlock code={firstShaderCode} language="typescript" showLineNumbers />
         <div className="mt-4 p-4 rounded-lg bg-gray-1 border border-gray-4">
           <h3 className="font-semibold text-gray-12 mb-2">What&apos;s happening here?</h3>
           <ul className="text-gray-9 space-y-2">
             <li>
-              <strong className="text-gray-11">Line 5:</strong> We create a <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">pass</code> — a fullscreen fragment shader.
+              <strong className="text-gray-11">Line 7:</strong> We create a <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">pass</code> — a fullscreen fragment shader.
             </li>
             <li>
-              <strong className="text-gray-11">Line 8:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">globals.resolution</code> gives us the canvas size.
+              <strong className="text-gray-11">Line 10:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">globals.resolution</code> gives us the canvas size.
             </li>
             <li>
-              <strong className="text-gray-11">Line 9:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">globals.time</code> is automatically updated each frame.
+              <strong className="text-gray-11">Line 11:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">globals.time</code> is automatically updated each frame.
             </li>
             <li>
-              <strong className="text-gray-11">Line 15:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">draw()</code> renders the shader to the screen.
+              <strong className="text-gray-11">Line 17:</strong> <code className="bg-gray-2 px-1.5 py-0.5 rounded text-sm">draw()</code> renders the shader to the screen.
             </li>
           </ul>
         </div>
@@ -207,7 +207,7 @@ export default function GettingStartedPage() {
         <p className="text-gray-11 mb-4">
           Here&apos;s a complete React component with proper initialization, cleanup, and resize handling:
         </p>
-        <CodeBlock code={reactCode} language="tsx" filename="ShaderCanvas.tsx" showLineNumbers />
+        <CodeBlock code={reactCode} language="tsx" filename="ShaderCanvas.tsx" />
         <Callout type="info">
           <strong>Key patterns:</strong>
           <ul className="mt-2 space-y-1 text-sm">

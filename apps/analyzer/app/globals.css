@@ -3,30 +3,87 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply bg-background text-foreground;
+  :root {
+    /* Geist Design System Colors */
+    --background: #000000;
+    --background-secondary: #0a0a0a; /* gray-1 */
+    --background-tertiary: #111111; /* gray-2 */
+
+    --foreground: #eeeeee; /* gray-12 */
+    --foreground-secondary: #b4b4b4; /* gray-11 */
+    --foreground-muted: #606060; /* gray-9 */
+
+    --border: #222222; /* gray-4 */
+    --border-hover: #2a2a2a; /* gray-5 */
+
+    --accent-blue: #0070f3; /* blue-9 */
+    --accent-blue-hover: #3b9eff; /* blue-10 */
+    --accent-green: #46a758; /* green-9 */
+    --accent-amber: #ffc53d; /* amber-9 */
+    --accent-red: #e5484d; /* red-9 */
   }
-  
-  * {
-    @apply border-foreground-muted/20;
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
   }
 }
 
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(0, 112, 243, 0.3);
+}
+
+/* Focus styles */
+:focus-visible {
+  @apply outline-none ring-2 ring-blue-500 ring-offset-2 ring-offset-black;
+}
+
+/* Transitions */
+* {
+  @apply transition-colors duration-150;
+}
+
+/* Utility class for thin scrollbars */
 @layer utilities {
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-  
+
   .scrollbar-thin::-webkit-scrollbar-track {
-    @apply bg-background-secondary;
+    background: transparent;
   }
-  
+
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply bg-foreground-muted rounded-full;
+    @apply bg-gray-6 rounded-full;
   }
-  
+
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    @apply bg-foreground-secondary;
+    @apply bg-gray-7;
   }
 }

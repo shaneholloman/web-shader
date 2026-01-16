@@ -63,9 +63,9 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
 
   if (tasks.length === 0) {
     return (
-      <div className="bg-background-secondary rounded-lg p-6 border border-foreground-muted/20">
-        <h3 className="text-lg font-semibold mb-4">Execution Timeline</h3>
-        <div className="text-center py-8 text-foreground-secondary">
+      <div className="bg-gray-1 rounded-lg p-6 border border-gray-4">
+        <h3 className="text-lg font-semibold text-gray-12 mb-4">Execution Timeline</h3>
+        <div className="text-center py-8 text-gray-11">
           No timeline data available
         </div>
       </div>
@@ -179,10 +179,10 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
   };
 
   return (
-    <div className="bg-background-secondary rounded-lg p-6 border border-foreground-muted/20">
+    <div className="bg-gray-1 rounded-lg p-6 border border-gray-4 hover:border-gray-5 transition-colors">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Execution Timeline</h3>
-        <div className="text-xs text-foreground-secondary">
+        <h3 className="text-lg font-semibold text-gray-12">Execution Timeline</h3>
+        <div className="text-xs text-gray-11">
           {formatDate(visibleStart)} — {formatDate(visibleEnd)}
         </div>
       </div>
@@ -191,7 +191,7 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
       <div className="space-y-4">
         {/* Timeline chart */}
         <div 
-          className="relative bg-background-tertiary rounded-lg overflow-hidden"
+          className="relative bg-gray-2 rounded-lg overflow-hidden"
           style={{ height: timelineHeight }}
         >
           {/* Time grid lines */}
@@ -199,7 +199,7 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
             {Array.from({ length: 10 }).map((_, i) => (
               <div 
                 key={i} 
-                className="flex-1 border-r border-foreground-muted/10 first:border-l"
+                className="flex-1 border-r border-gray-4 first:border-l"
               />
             ))}
           </div>
@@ -217,7 +217,7 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
             if (left + width < 0 || left > 100) return null;
             
             const completed = taskCompleted(item.task);
-            const barColor = completed ? 'bg-accent-blue' : 'bg-accent-red';
+            const barColor = completed ? 'bg-blue-9' : 'bg-red-9';
             const y = item.row * rowHeight + 10;
             
             // Tool call density
@@ -266,10 +266,10 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
 
         {/* Brush/range selector (Premiere-style zoom handles) */}
         <div className="relative">
-          <div className="text-xs text-foreground-muted mb-1 px-2">Zoom Range</div>
+          <div className="text-xs text-gray-9 mb-1 px-2">Zoom Range</div>
           <div 
             ref={brushRef}
-            className="relative h-16 bg-background-tertiary rounded-lg overflow-hidden cursor-default"
+            className="relative h-16 bg-gray-2 rounded-lg overflow-hidden cursor-default"
           >
             {/* Mini timeline overview */}
             <div className="absolute inset-0 flex items-center px-1">
@@ -305,12 +305,12 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
               
               {/* Selection area */}
               <div 
-                className="relative border-2 border-accent-blue"
+                className="relative border-2 border-blue-9"
                 style={{ width: `${zoomEnd - zoomStart}%` }}
               >
                 {/* Left handle */}
                 <div
-                  className="absolute left-0 top-0 bottom-0 w-3 bg-accent-blue cursor-ew-resize hover:bg-accent-blue-hover flex items-center justify-center"
+                  className="absolute left-0 top-0 bottom-0 w-3 bg-blue-9 cursor-ew-resize hover:bg-blue-10 flex items-center justify-center"
                   onMouseDown={handleBrushMouseDown('start')}
                   style={{ marginLeft: '-6px' }}
                 >
@@ -319,7 +319,7 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
                 
                 {/* Right handle */}
                 <div
-                  className="absolute right-0 top-0 bottom-0 w-3 bg-accent-blue cursor-ew-resize hover:bg-accent-blue-hover flex items-center justify-center"
+                  className="absolute right-0 top-0 bottom-0 w-3 bg-blue-9 cursor-ew-resize hover:bg-blue-10 flex items-center justify-center"
                   onMouseDown={handleBrushMouseDown('end')}
                   style={{ marginRight: '-6px' }}
                 >
@@ -336,20 +336,20 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
         </div>
 
         {/* Legend */}
-        <div className="flex gap-6 pt-2 text-xs text-foreground-secondary">
+        <div className="flex gap-6 pt-2 text-xs text-gray-11">
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-accent-blue rounded" />
+            <div className="w-4 h-4 bg-blue-9 rounded" />
             <span>Completed (called done)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-accent-red rounded" />
+            <div className="w-4 h-4 bg-red-9 rounded" />
             <span>Incomplete (no done call)</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex gap-0.5">
-              <div className="w-px h-4 bg-foreground-muted" />
-              <div className="w-px h-4 bg-foreground-muted" />
-              <div className="w-px h-4 bg-foreground-muted" />
+              <div className="w-px h-4 bg-gray-9" />
+              <div className="w-px h-4 bg-gray-9" />
+              <div className="w-px h-4 bg-gray-9" />
             </div>
             <span>Tool call density</span>
           </div>
@@ -359,53 +359,53 @@ export function ExecutionTimeline({ tasks: allTasks }: ExecutionTimelineProps) {
       {/* Hover tooltip */}
       {hoveredTask && (
         <div
-          className="fixed z-50 bg-background border border-foreground-muted/40 rounded-lg p-3 shadow-xl pointer-events-none"
+          className="fixed z-50 bg-black border border-gray-4 rounded-lg p-3 shadow-xl pointer-events-none"
           style={{
             left: mousePos.x + 15,
             top: mousePos.y + 15,
           }}
         >
-          <div className="text-sm font-semibold mb-2">{hoveredTask.taskName}</div>
-          <div className="space-y-1 text-xs text-foreground-secondary">
+          <div className="text-sm font-semibold text-gray-12 mb-2">{hoveredTask.taskName}</div>
+          <div className="space-y-1 text-xs text-gray-11">
             <div className="flex justify-between gap-4">
               <span>Duration:</span>
-              <span className="text-foreground font-mono">
+              <span className="text-gray-12 font-mono">
                 {formatTime(hoveredTask.summary?.elapsedMs || 0)}
               </span>
             </div>
             <div className="flex justify-between gap-4">
               <span>Cost:</span>
-              <span className="text-accent-green font-mono">
+              <span className="text-green-9 font-mono">
                 ${hoveredTask.summary?.totalCost.toFixed(4)}
               </span>
             </div>
             <div className="flex justify-between gap-4">
               <span>Tool Calls:</span>
-              <span className="text-accent-blue font-mono">
+              <span className="text-blue-9 font-mono">
                 {hoveredTask.summary?.totalToolCalls}
               </span>
             </div>
             <div className="flex justify-between gap-4">
               <span>Iterations:</span>
-              <span className="text-foreground font-mono">
+              <span className="text-gray-12 font-mono">
                 {hoveredTask.summary?.totalIterations}
               </span>
             </div>
             <div className="flex justify-between gap-4">
               <span>Status:</span>
-              <span className={`font-mono ${taskCompleted(hoveredTask) ? 'text-accent-green' : 'text-accent-red'}`}>
+              <span className={`font-mono ${taskCompleted(hoveredTask) ? 'text-green-9' : 'text-red-9'}`}>
                 {taskCompleted(hoveredTask) ? 'Completed' : 'Incomplete'}
               </span>
             </div>
             {(hoveredTask.summary?.errorsEncountered || 0) > 0 && (
               <div className="flex justify-between gap-4">
                 <span>Errors:</span>
-                <span className="text-accent-yellow font-mono">
+                <span className="text-amber-9 font-mono">
                   {hoveredTask.summary?.errorsEncountered}
                 </span>
               </div>
             )}
-            <div className="pt-1 mt-1 border-t border-foreground-muted/20 text-foreground-muted">
+            <div className="pt-1 mt-1 border-t border-gray-4 text-gray-9">
               <div>Started: {formatDate(new Date(hoveredTask.startTime!).getTime())}</div>
               <div>Ended: {formatDate(new Date(hoveredTask.endTime!).getTime())}</div>
             </div>

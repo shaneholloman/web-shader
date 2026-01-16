@@ -1,7 +1,6 @@
-"use client";
-
-import { useState, useEffect } from "react";
-import { Check, Copy, Terminal } from "lucide-react";
+import { Terminal } from "lucide-react";
+import { highlightCode, countLinesInHtml } from "@/lib/shiki";
+import { CopyButton } from "./CopyButton";
 
 interface CodeBlockProps {
   code: string;
@@ -24,64 +23,18 @@ const languageConfig: Record<string, { name: string; color: string }> = {
   css: { name: "CSS", color: "#1572b6" },
 };
 
-export function CodeBlock({
+export async function CodeBlock({
   code,
   language = "typescript",
   filename,
   showLineNumbers = false,
 }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false);
-  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
   const langConfig = languageConfig[language] || { name: language.toUpperCase(), color: "#888" };
-
-  useEffect(() => {
-    let mounted = true;
-    
-    async function highlightCode() {
-      try {
-        // Dynamically import shiki
-        const { createHighlighter } = await import("shiki");
-        
-        const highlighter = await createHighlighter({
-          themes: ["github-dark"],
-          langs: ["typescript", "javascript", "tsx", "jsx", "json", "bash", "html", "css", "wgsl"],
-        });
-
-        if (!mounted) return;
-        
-        const html = highlighter.codeToHtml(code.trim(), {
-          lang: language,
-          theme: "github-dark",
-        });
-        
-        setHighlightedHtml(html);
-      } catch (error) {
-        console.warn("Shiki highlighting failed, using fallback:", error);
-        // Fallback to plain code
-        setHighlightedHtml(null);
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    highlightCode();
-    
-    return () => {
-      mounted = false;
-    };
-  }, [code, language]);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(code.trim());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const lines = code.trim().split("\n");
+  
+  // Highlight code on the server at render time
+  const highlightedHtml = await highlightCode(code, language);
+  // Count actual line elements from Shiki's HTML output, not from raw code
+  const lineCount = countLinesInHtml(highlightedHtml);
 
   return (
     <div className="group relative rounded-lg border border-[#333] bg-[#0a0a0a] overflow-hidden my-4">
@@ -99,17 +52,7 @@ export function CodeBlock({
             </div>
           )}
         </div>
-        <button
-          onClick={handleCopy}
-          className="p-1.5 rounded-md hover:bg-[#333] transition-colors text-[#666] hover:text-[#fafafa]"
-          aria-label={copied ? "Copied!" : "Copy code"}
-        >
-          {copied ? (
-            <Check className="w-4 h-4 text-green-500" />
-          ) : (
-            <Copy className="w-4 h-4" />
-          )}
-        </button>
+        <CopyButton code={code} />
       </div>
 
       {/* Code content */}
@@ -118,7 +61,7 @@ export function CodeBlock({
           <div className="flex">
             {/* Line numbers */}
             <div className="flex-none py-4 pl-4 pr-3 text-right select-none border-r border-[#333] bg-[#0a0a0a]">
-              {lines.map((_, i) => (
+              {Array.from({ length: lineCount }, (_, i) => (
                 <div key={i} className="text-sm leading-6 text-[#444] font-mono">
                   {i + 1}
                 </div>
@@ -126,38 +69,18 @@ export function CodeBlock({
             </div>
             {/* Code */}
             <div className="flex-1 py-4 px-4 overflow-x-auto">
-              {isLoading ? (
-                <pre className="text-sm leading-6 font-mono text-[#a1a1a1]">
-                  <code>{code.trim()}</code>
-                </pre>
-              ) : highlightedHtml ? (
-                <div 
-                  className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent"
-                  dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-                />
-              ) : (
-                <pre className="text-sm leading-6 font-mono text-[#a1a1a1]">
-                  <code>{code.trim()}</code>
-                </pre>
-              )}
+              <div 
+                className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent [&_code]:!text-sm [&_code]:!leading-6 [&_code_span.line]:!leading-6"
+                dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+              />
             </div>
           </div>
         ) : (
           <div className="py-4 px-4 overflow-x-auto">
-            {isLoading ? (
-              <pre className="text-sm leading-6 font-mono text-[#a1a1a1]">
-                <code>{code.trim()}</code>
-              </pre>
-            ) : highlightedHtml ? (
-              <div 
-                className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent"
-                dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-              />
-            ) : (
-              <pre className="text-sm leading-6 font-mono text-[#a1a1a1]">
-                <code>{code.trim()}</code>
-              </pre>
-            )}
+            <div 
+              className="text-sm leading-6 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_pre]:!m-0 [&_code]:!bg-transparent"
+              dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+            />
           </div>
         )}
       </div>
