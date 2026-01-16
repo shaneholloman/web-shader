@@ -16,13 +16,13 @@ todos:
     status: pending
   - id: create-mcp-page
     content: Create /mcp-server page with setup instructions and "Add to Cursor" button
-    status: in_progress
+    status: completed
   - id: add-nav-link
     content: Add MCP Server link to the docs navigation
-    status: pending
+    status: completed
   - id: test-integration
     content: Test MCP server and deeplink with Cursor client
-    status: pending
+    status: in_progress
 ---
 
 ## Progress Log
@@ -46,6 +46,19 @@ todos:
   - `search_docs` - Searches documentation
 - Build passes successfully
 - Starting ralph 68 for MCP documentation page
+
+### Ralph 68 Completed - Phase 2 Done
+- Created `/mcp-server` page at `app/mcp-server/page.tsx`
+- Page includes:
+  - Hero section with "Add to Cursor" deeplink button
+  - What is MCP explanation
+  - All 5 tools documented with descriptions
+  - Manual setup instructions with code blocks
+  - How it works section
+  - Next steps links
+- Added "MCP Server" link to Navigation in Reference section
+- Page visually verified - renders correctly
+- All tasks complete, testing MCP integration next
 
 # MCP Server for ralph-gpu Documentation
 
