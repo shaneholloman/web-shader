@@ -33,96 +33,53 @@
     import { gpu } from '/ralph-gpu.mjs';
     
     const canvas = document.getElementById('canvas');
-    let contexts = [];
-    let animationId = null;
-    let isRunning = false;
     
     // Check WebGPU support
     if (!gpu.isSupported()) {
       document.body.innerHTML = '<div class="error unsupported">WebGPU not supported. Try Chrome 113+, Edge 113+, or Safari 17+.</div>';
       window.parent.postMessage({ type: 'error', message: 'WebGPU not supported' }, '*');
-    } else {
-      init();
+      throw new Error('WebGPU not supported');
     }
     
-    function init() {
-      const cleanup = () => {
-        if (animationId) {
-          cancelAnimationFrame(animationId);
-          animationId = null;
-        }
-        for (const ctx of contexts) {
-          try { ctx.dispose(); } catch {}
-        }
-        contexts = [];
-        isRunning = false;
-      };
-      
-      const executeCode = async (code) => {
-        cleanup();
-        isRunning = true;
-        
-        // Hide any previous error
-        const errorEl = document.querySelector('.error');
-        if (errorEl) errorEl.remove();
-        canvas.style.display = 'block';
-        
-        // Wrap gpu.init to track contexts
-        const wrappedGpu = {
-          ...gpu,
-          init: async (...args) => {
-            const ctx = await gpu.init(...args);
-            contexts.push(ctx);
-            return ctx;
-          }
-        };
-        
-        // Save originals
-        const origRAF = window.requestAnimationFrame.bind(window);
-        
-        // Wrap requestAnimationFrame
-        window.requestAnimationFrame = (cb) => {
-          if (!isRunning) return 0;
-          animationId = origRAF((t) => {
-            if (isRunning) cb(t);
-          });
-          return animationId;
-        };
-        
-        try {
-          const fn = new Function('gpu', 'canvas', `
-            return (async () => {
-              ${code}
-            })();
-          `);
-          await fn(wrappedGpu, canvas);
-          window.parent.postMessage({ type: 'success' }, '*');
-        } catch (e) {
-          const msg = e.message || 'Execution failed';
-          showError(msg);
-          window.parent.postMessage({ type: 'error', message: msg }, '*');
-        } finally {
-          window.requestAnimationFrame = origRAF;
-        }
-      };
-      
-      function showError(msg) {
-        canvas.style.display = 'none';
-        const div = document.createElement('div');
-        div.className = 'error';
-        div.textContent = msg;
-        document.body.appendChild(div);
-      }
-      
-      window.addEventListener('message', (event) => {
-        const { type, code } = event.data || {};
-        if (type === 'run' && code) {
-          executeCode(code);
-        } else if (type === 'stop') {
-          cleanup();
-        }
-      });
+    function showError(msg) {
+      canvas.style.display = 'none';
+      const div = document.createElement('div');
+      div.className = 'error';
+      div.textContent = msg;
+      document.body.appendChild(div);
     }
+    
+    const executeCode = async (code) => {
+      // Hide any previous error
+      const errorEl = document.querySelector('.error');
+      if (errorEl) errorEl.remove();
+      canvas.style.display = 'block';
+      
+      try {
+        // Strip import statement since gpu is already in scope
+        const codeWithoutImport = code.replace(/import\s+\{[^}]+\}\s+from\s+['"][^'"]+['"];?\s*/g, '');
+        
+        // Execute code with gpu and canvas in scope
+        const fn = new Function('gpu', 'canvas', `
+          return (async () => {
+            ${codeWithoutImport}
+          })();
+        `);
+        await fn(gpu, canvas);
+        window.parent.postMessage({ type: 'success' }, '*');
+      } catch (e) {
+        const msg = e.message || 'Execution failed';
+        showError(msg);
+        window.parent.postMessage({ type: 'error', message: msg }, '*');
+      }
+    };
+    
+    window.addEventListener('message', (event) => {
+      const { type, code } = event.data || {};
+      if (type === 'run' && code) {
+        executeCode(code);
+      }
+    });
   </script>
 </body>
 </html>

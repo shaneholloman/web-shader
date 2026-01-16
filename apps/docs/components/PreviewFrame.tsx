@@ -13,7 +13,6 @@ interface PreviewFrameProps {
  */
 export function PreviewFrame({ code, onError }: PreviewFrameProps) {
   const isLoadedRef = useRef(false);
-  const hasSucceededRef = useRef(false);
 
   // Track latest code
   const latestCodeRef = useRef<string | null>(null);
@@ -45,7 +44,6 @@ export function PreviewFrame({ code, onError }: PreviewFrameProps) {
   // Direct send function (doesn't depend on ref)
   const runCodeDirect = useCallback((iframe: HTMLIFrameElement, codeToRun: string) => {
     if (!iframe?.contentWindow) return;
-    hasSucceededRef.current = false;
     iframe.contentWindow.postMessage({ type: 'run', code: codeToRun }, '*');
   }, []);
 
@@ -55,10 +53,8 @@ export function PreviewFrame({ code, onError }: PreviewFrameProps) {
       const { type, message } = event.data || {};
       
       if (type === 'error') {
-        hasSucceededRef.current = false;
         onError?.(message);
       } else if (type === 'success') {
-        hasSucceededRef.current = true;
         onError?.(null);
       }
     };
@@ -78,20 +74,6 @@ export function PreviewFrame({ code, onError }: PreviewFrameProps) {
   useEffect(() => {
     if (code === null || !isLoadedRef.current || !iframeElementRef.current) return;
     runCodeDirect(iframeElementRef.current, code);
-  }, [code, runCodeDirect]);
-
-  // Retry mechanism - if code hasn't succeeded after 500ms, retry
-  useEffect(() => {
-    if (!code || !isLoadedRef.current || !iframeElementRef.current) return;
-    
-    const timer = setTimeout(() => {
-      // Retry if we haven't received success
-      if (!hasSucceededRef.current && iframeElementRef.current) {
-        runCodeDirect(iframeElementRef.current, code);
-      }
-    }, 500);
-    
-    return () => clearTimeout(timer);
   }, [code, runCodeDirect]);
 
   return (

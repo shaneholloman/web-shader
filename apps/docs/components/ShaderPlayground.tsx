@@ -78,6 +78,7 @@ frame();
 export function ShaderPlayground({ initialExample }: ShaderPlaygroundProps) {
   const [code, setCode] = useState(initialExample.code);
   const [activeCode, setActiveCode] = useState<string | null>(null);
+  const [runKey, setRunKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<'mac' | 'other'>('other');
 
@@ -100,6 +101,7 @@ export function ShaderPlayground({ initialExample }: ShaderPlaygroundProps) {
 
   const handleRun = useCallback(() => {
     setError(null);
+    setRunKey(k => k + 1); // Reset iframe on each run
     
     // For executable examples, run the full code
     if (initialExample.executable) {
@@ -157,6 +159,7 @@ export function ShaderPlayground({ initialExample }: ShaderPlaygroundProps) {
         {/* Preview Pane - isolated iframe execution */}
         <div className="flex-1 lg:w-1/2 relative bg-black">
           <PreviewFrame 
+            key={runKey}
             code={activeCode}
             onError={handleError}
           />
