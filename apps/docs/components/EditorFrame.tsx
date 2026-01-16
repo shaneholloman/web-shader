@@ -9,109 +9,11 @@ interface EditorFrameProps {
   onRun?: () => void;
 }
 
-// Type definitions for ralph-gpu
-const ralphGpuTypes = `
-declare module 'ralph-gpu' {
-  export interface GPUContext {
-    pass(shader: string, options?: { uniforms?: Record<string, any> }): Pass;
-    material(shader: string, options?: any): Material;
-    compute(shader: string, options?: any): ComputeShader;
-    target(width?: number, height?: number, options?: any): RenderTarget;
-    pingPong(width: number, height: number, options?: any): PingPongTarget;
-    storage(byteSize: number): StorageBuffer;
-    particles(count: number, options: any): Particles;
-    createSampler(descriptor?: any): Sampler;
-    setTarget(target: RenderTarget | null): void;
-    clear(target?: RenderTarget | null, color?: number[]): void;
-    resize(width: number, height: number): void;
-    dispose(): void;
-    clearColor: number[];
-    autoClear: boolean;
-    paused: boolean;
-    timeScale: number;
-    time: number;
-    dpr: number;
-  }
-  
-  export interface Pass {
-    draw(): void;
-    storage(name: string, buffer: StorageBuffer): void;
-    set(key: string, value: any): void;
-    uniforms: Record<string, { value: any }>;
-    dispose(): void;
-  }
-  
-  export interface Material {
-    draw(): void;
-    storage(name: string, buffer: StorageBuffer): void;
-    uniforms: Record<string, { value: any }>;
-    dispose(): void;
-  }
-  
-  export interface ComputeShader {
-    dispatch(x: number, y?: number, z?: number): void;
-    storage(name: string, buffer: StorageBuffer): void;
-    uniforms: Record<string, { value: any }>;
-    dispose(): void;
-  }
-  
-  export interface RenderTarget {
-    texture: any;
-    gpuTexture: GPUTexture;
-    view: GPUTextureView;
-    sampler: GPUSampler;
-    width: number;
-    height: number;
-    format: string;
-    resize(width: number, height: number): void;
-    readPixels(x?: number, y?: number, w?: number, h?: number): Promise<Uint8Array | Float32Array>;
-    dispose(): void;
-  }
-  
-  export interface PingPongTarget {
-    read: RenderTarget;
-    write: RenderTarget;
-    swap(): void;
-    resize(width: number, height: number): void;
-    dispose(): void;
-  }
-  
-  export interface StorageBuffer {
-    write(data: Float32Array | Uint32Array): void;
-    gpuBuffer: GPUBuffer;
-    byteSize: number;
-    dispose(): void;
-  }
-  
-  export interface Particles {
-    write(data: Float32Array | Uint32Array): void;
-    draw(): void;
-    storageBuffer: StorageBuffer;
-    dispose(): void;
-  }
-  
-  export interface Sampler {
-    gpuSampler: GPUSampler;
-    dispose(): void;
-  }
-  
-  export const gpu: {
-    isSupported(): boolean;
-    init(canvas: HTMLCanvasElement, options?: { autoResize?: boolean; dpr?: number; debug?: boolean }): Promise<GPUContext>;
-  };
-  
-  export class WebGPUNotSupportedError extends Error {}
-  export class DeviceCreationError extends Error {}
-  export class ShaderCompileError extends Error {
-    line?: number;
-    column?: number;
-  }
-}
-`;
-
 /**
  * Renders Monaco editor in Shadow DOM using manual AMD loader
  * to avoid React portal issues with Monaco's internal DOM handling.
+ * 
+ * TypeScript definitions are fetched from CDN to stay in sync with the library.
  */
 export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -135,6 +37,7 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
     if (!containerRef.current || monacoLoadedRef.current) return;
 
     const container = containerRef.current;
+    let checkInterval: NodeJS.Timeout | null = null;
 
     // Check if shadow root already exists
     let shadow = container.shadowRoot;
@@ -161,19 +64,39 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
     // Load Monaco via AMD loader
     monacoLoadedRef.current = true;
 
-    // Check if Monaco loader is already loaded
-    if (!(window as any).require) {
-      const loaderScript = document.createElement('script');
-      loaderScript.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js';
-      loaderScript.onload = () => {
-        initMonaco(editorDiv);
-      };
-      document.head.appendChild(loaderScript);
-    } else {
+    // Check if require (AMD loader) is available
+    if ((window as any).require && (window as any).require.config) {
+      // Loader already loaded, init Monaco directly
       initMonaco(editorDiv);
+    } else {
+      // Check if loader script is already being loaded
+      const existingLoader = document.querySelector('script[src*="monaco-editor"][src*="/loader.js"]') as HTMLScriptElement;
+      
+      if (existingLoader) {
+        // Script exists, wait for it to load
+        checkInterval = setInterval(() => {
+          if ((window as any).require && (window as any).require.config) {
+            if (checkInterval) clearInterval(checkInterval);
+            initMonaco(editorDiv);
+          }
+        }, 50);
+      } else {
+        // Load the script
+        const loaderScript = document.createElement('script');
+        loaderScript.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js';
+        loaderScript.onload = () => {
+          initMonaco(editorDiv);
+        };
+        document.head.appendChild(loaderScript);
+      }
     }
 
     function initMonaco(editorDiv: HTMLDivElement) {
+      // Skip if editor already exists for this div
+      if (editorRef.current) {
+        return;
+      }
+
       const require = (window as any).require;
       
       require.config({ 
@@ -182,7 +105,25 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
         } 
       });
 
-      require(['vs/editor/editor.main'], function (monaco: any) {
+      require(['vs/editor/editor.main'], async function (monaco: any) {
+        // Dispose any existing editor in this div
+        const existingEditors = monaco.editor.getEditors();
+        for (const ed of existingEditors) {
+          const domNode = ed.getDomNode();
+          if (domNode && editorDiv.contains(domNode)) {
+            ed.dispose();
+          }
+        }
+
+        // Double-check our ref doesn't have an editor
+        if (editorRef.current) {
+          editorRef.current.dispose();
+          editorRef.current = null;
+        }
+
+        // Clear the editor div to ensure clean state
+        editorDiv.innerHTML = '';
+
         // Define Vercel dark theme
         monaco.editor.defineTheme('vercel-dark', {
           base: 'vs-dark',
@@ -244,9 +185,54 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
           lib: ['esnext', 'dom'],
         });
 
-        // Add ralph-gpu types
+        // Load all ralph-gpu type files
+        const typeFiles = [
+          'index.d.ts',
+          'context.d.ts',
+          'pass.d.ts',
+          'material.d.ts',
+          'compute.d.ts',
+          'target.d.ts',
+          'ping-pong.d.ts',
+          'mrt.d.ts',
+          'storage.d.ts',
+          'particles.d.ts',
+          'sampler.d.ts',
+          'errors.d.ts',
+          'types.d.ts',
+          'uniforms.d.ts',
+          'events.d.ts',
+          'event-emitter.d.ts',
+          'profiler.d.ts',
+        ];
+
+        // Load each type file - Monaco will resolve imports automatically
+        for (const file of typeFiles) {
+          try {
+            const response = await fetch(`/ralph-gpu-types/${file}`);
+            const content = await response.text();
+
+            // Use proper module paths so imports resolve
+            // e.g., import from "./types" in context.d.ts will resolve to types.d.ts
+            const modulePath = `file:///node_modules/ralph-gpu/dist/${file}`;
+            monaco.languages.typescript.typescriptDefaults.addExtraLib(
+              content,
+              modulePath
+            );
+          } catch (error) {
+            console.warn(`Failed to load ${file}:`, error);
+          }
+        }
+
+        // Create module declaration that maps 'ralph-gpu' to the index.d.ts
+        // This tells Monaco that import from 'ralph-gpu' should use our loaded types
+        const moduleDeclaration = `
+declare module 'ralph-gpu' {
+  export * from 'file:///node_modules/ralph-gpu/dist/index';
+}
+`;
         monaco.languages.typescript.typescriptDefaults.addExtraLib(
-          ralphGpuTypes,
+          moduleDeclaration,
           'file:///node_modules/@types/ralph-gpu/index.d.ts'
         );
 
@@ -289,6 +275,16 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
 
         editorRef.current = editor;
 
+        // Fix Shadow DOM keyboard event handling
+        // Ensure Monaco's textarea is properly configured and focused
+        const domNode = editor.getDomNode();
+        if (domNode) {
+          // Give the editor focus to activate keyboard input
+          setTimeout(() => {
+            editor.focus();
+          }, 50);
+        }
+
         // Listen for content changes
         editor.onDidChangeModelContent(() => {
           const value = editor.getValue();
@@ -310,6 +306,9 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
 
     // Cleanup
     return () => {
+      if (checkInterval) {
+        clearInterval(checkInterval);
+      }
       if (editorRef.current) {
         editorRef.current.dispose();
         editorRef.current = null;
