@@ -502,33 +502,20 @@ frame();
   {
     slug: 'alien-planet',
     title: 'Alien Planet',
-    description: 'A procedurally generated alien world with atmospheric scattering, orbiting moon, and particle-based starfield.',
+    description: 'A procedurally generated alien world with atmospheric scattering and an orbiting moon. Uses raymarching with fBm noise for terrain detail.',
     shader: `
 const MAX_STEPS: i32 = 100;
 const MAX_DIST: f32 = 200.0;
 const SURF_DIST: f32 = 0.001;
-const PI: f32 = 3.14159265359;
 const PLANET_RADIUS: f32 = 8.0;
 const PLANET_POS: vec3f = vec3f(0.0, 0.0, 30.0);
 const ATMOSPHERE_RADIUS: f32 = 9.5;
 const MOON_RADIUS: f32 = 1.5;
 
-fn hash21(p: vec2f) -> f32 {
-  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
 fn hash31(p: vec3f) -> f32 {
   var p3 = fract(p * 0.1031);
   p3 += dot(p3, p3.zyx + 31.32);
   return fract((p3.x + p3.y) * p3.z);
-}
-
-fn hash33(p: vec3f) -> vec3f {
-  var p3 = fract(p * vec3f(0.1031, 0.1030, 0.0973));
-  p3 += dot(p3, p3.yxz + 33.33);
-  return fract((p3.xxy + p3.yxx) * p3.zyx);
 }
 
 fn noise3D(p: vec3f) -> f32 {
@@ -583,13 +570,13 @@ fn atmosphere(ro: vec3f, rd: vec3f) -> vec3f {
   let oc = ro - PLANET_POS; let b = dot(oc, rd); let c = dot(oc, oc) - ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
   let h = b * b - c; if (h < 0.0) { return vec3f(0.0); }
   let t1 = max(-b - sqrt(h), 0.0); let t2 = -b + sqrt(h); if (t2 < 0.0) { return vec3f(0.0); }
-  var scatter = vec3f(0.0); let step = (t2 - t1) / 8.0;
+  var scatter = vec3f(0.0); let astep = (t2 - t1) / 8.0;
   for (var i = 0; i < 8; i++) {
-    let t = t1 + (f32(i) + 0.5) * step;
-    let sp = ro + rd * t;
+    let at = t1 + (f32(i) + 0.5) * astep;
+    let sp = ro + rd * at;
     let alt = (length(sp - PLANET_POS) - PLANET_RADIUS) / (ATMOSPHERE_RADIUS - PLANET_RADIUS);
     let den = exp(-alt * 4.0);
-    scatter += (vec3f(0.2, 0.5, 1.0) + vec3f(1.0, 0.4, 0.2) * 0.3) * den * step * 0.15;
+    scatter += (vec3f(0.2, 0.5, 1.0) + vec3f(1.0, 0.4, 0.2) * 0.3) * den * astep * 0.15;
   }
   return scatter;
 }
@@ -613,13 +600,13 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let time = globals.time;
   let camDist = 75.0 - time * 0.3; let camAngle = time * 0.05;
   let ro = vec3f(sin(camAngle) * 20.0, sin(time * 0.1) * 4.0 + 8.0, camDist);
-  let forward = normalize(PLANET_POS - ro);
-  let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
-  let up = cross(forward, right);
-  let rd = normalize(forward + uv.x * right + uv.y * up);
+  let fwd = normalize(PLANET_POS - ro);
+  let rgt = normalize(cross(vec3f(0.0, 1.0, 0.0), fwd));
+  let up = cross(fwd, rgt);
+  let rd = normalize(fwd + uv.x * rgt + uv.y * up);
   let sunDir = normalize(vec3f(0.5, 0.3, -1.0));
   
-  // Background with nebula and sun glow (stars rendered separately as particles)
+  // Background with nebula and sun glow
   var col = vec3f(0.0);
   col += pow(max(dot(rd, sunDir), 0.0), 256.0) * 2.0 * vec3f(1.0, 0.9, 0.7);
   col += pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.3 * vec3f(1.0, 0.9, 0.7);
@@ -653,7 +640,6 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     if (hit.mat == 1) { sc += vec3f(0.3, 0.5, 1.0) * fres * 0.5; }
     col = sc;
   } else {
-    // Only add atmosphere if we didn't hit the planet/moon
     col += atmosphere(ro, rd);
   }
   
@@ -669,100 +655,6 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 const canvas = document.getElementById('canvas');
 const ctx = await gpu.init(canvas, { autoResize: true });
 
-// Shared camera function
-const getCamera = (time, aspect) => {
-  const camDist = 75.0 - time * 0.3;
-  const camAngle = time * 0.05;
-  const ro = [Math.sin(camAngle) * 20.0, Math.sin(time * 0.1) * 4.0 + 8.0, camDist];
-  const target = [0.0, 0.0, 30.0];
-  const forward = [target[0] - ro[0], target[1] - ro[1], target[2] - ro[2]];
-  const len = Math.sqrt(forward[0]**2 + forward[1]**2 + forward[2]**2);
-  forward[0] /= len; forward[1] /= len; forward[2] /= len;
-  const right = [forward[2], 0, -forward[0]];
-  const rlen = Math.sqrt(right[0]**2 + right[2]**2);
-  right[0] /= rlen; right[2] /= rlen;
-  const up = [right[1]*forward[2] - right[2]*forward[1], right[2]*forward[0] - right[0]*forward[2], right[0]*forward[1] - right[1]*forward[0]];
-  return { ro, forward, right, up };
-};
-
-// Generate star particles
-const starCount = 2000;
-const starData = new Float32Array(starCount * 8);
-
-for (let i = 0; i < starCount; i++) {
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
-  const idx = i * 8;
-  
-  starData[idx] = Math.sin(phi) * Math.cos(theta);
-  starData[idx + 1] = Math.sin(phi) * Math.sin(theta);
-  starData[idx + 2] = Math.cos(phi);
-  starData[idx + 3] = Math.pow(Math.random(), 2.0) * 1.5 + 0.3;
-  
-  const temp = Math.random();
-  if (temp > 0.75) {
-    starData[idx + 4] = 1.0; starData[idx + 5] = 0.9; starData[idx + 6] = 0.7;
-  } else if (temp < 0.25) {
-    starData[idx + 4] = 0.7; starData[idx + 5] = 0.85; starData[idx + 6] = 1.0;
-  } else {
-    starData[idx + 4] = 1.0; starData[idx + 5] = 1.0; starData[idx + 6] = 1.0;
-  }
-  
-  starData[idx + 7] = Math.random() > 0.95 ? 4.0 : (Math.random() > 0.8 ? 2.5 : 1.5);
-}
-
-const stars = ctx.particles(starCount, {
-  bufferSize: starCount * 32,
-  shader: \`
-struct Star { pos: vec3f, brightness: f32, color: vec3f, size: f32 }
-@group(1) @binding(0) var<storage, read> particles: array<Star>;
-
-struct VO { @builtin(position) position: vec4f, @location(0) uv: vec2f, @location(1) brightness: f32, @location(2) color: vec3f }
-
-@vertex
-fn vs_main(@builtin(instance_index) iid: u32, @builtin(vertex_index) vid: u32) -> VO {
-  var out: VO;
-  let star = particles[iid];
-  let rd = normalize(star.pos);
-  
-  let time = globals.time;
-  let camDist = 75.0 - time * 0.3; let camAngle = time * 0.05;
-  let ro = vec3f(sin(camAngle) * 20.0, sin(time * 0.1) * 4.0 + 8.0, camDist);
-  let target = vec3f(0.0, 0.0, 30.0);
-  let forward = normalize(target - ro);
-  let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
-  let up = cross(forward, right);
-  
-  let screenX = dot(rd, right);
-  let screenY = dot(rd, up);
-  let depth = dot(rd, forward);
-  
-  if (depth > 0.0) {
-    let offset = quadOffset(vid) * star.size * 0.008;
-    out.position = vec4f(screenX + offset.x, screenY + offset.y, 0.9, 1.0);
-  } else {
-    out.position = vec4f(-10.0, -10.0, 0.0, 1.0);
-  }
-  
-  out.uv = quadUV(vid);
-  out.brightness = star.brightness;
-  out.color = star.color;
-  return out;
-}
-
-@fragment
-fn fs_main(in: VO) -> @location(0) vec4f {
-  let d = length(in.uv - 0.5) * 2.0;
-  let alpha = 1.0 - smoothstep(0.0, 1.0, d);
-  let twinkle = 0.7 + 0.3 * sin(globals.time * 5.0 + in.brightness * 100.0);
-  return vec4f(in.color * in.brightness * twinkle * alpha, alpha);
-}
-\`,
-});
-
-stars.write(starData);
-
-// Raymarcher for planet
 const alienPlanet = ctx.pass(\`
 const MAX_STEPS: i32 = 100;
 const MAX_DIST: f32 = 200.0;
@@ -772,22 +664,10 @@ const PLANET_POS: vec3f = vec3f(0.0, 0.0, 30.0);
 const ATMOSPHERE_RADIUS: f32 = 9.5;
 const MOON_RADIUS: f32 = 1.5;
 
-fn hash21(p: vec2f) -> f32 {
-  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
 fn hash31(p: vec3f) -> f32 {
   var p3 = fract(p * 0.1031);
   p3 += dot(p3, p3.zyx + 31.32);
   return fract((p3.x + p3.y) * p3.z);
-}
-
-fn hash33(p: vec3f) -> vec3f {
-  var p3 = fract(p * vec3f(0.1031, 0.1030, 0.0973));
-  p3 += dot(p3, p3.yxz + 33.33);
-  return fract((p3.xxy + p3.yxx) * p3.zyx);
 }
 
 fn noise3D(p: vec3f) -> f32 {
@@ -842,13 +722,13 @@ fn atmosphere(ro: vec3f, rd: vec3f) -> vec3f {
   let oc = ro - PLANET_POS; let b = dot(oc, rd); let c = dot(oc, oc) - ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
   let h = b * b - c; if (h < 0.0) { return vec3f(0.0); }
   let t1 = max(-b - sqrt(h), 0.0); let t2 = -b + sqrt(h); if (t2 < 0.0) { return vec3f(0.0); }
-  var scatter = vec3f(0.0); let step = (t2 - t1) / 8.0;
+  var scatter = vec3f(0.0); let astep = (t2 - t1) / 8.0;
   for (var i = 0; i < 8; i++) {
-    let t = t1 + (f32(i) + 0.5) * step;
-    let sp = ro + rd * t;
+    let at = t1 + (f32(i) + 0.5) * astep;
+    let sp = ro + rd * at;
     let alt = (length(sp - PLANET_POS) - PLANET_RADIUS) / (ATMOSPHERE_RADIUS - PLANET_RADIUS);
     let den = exp(-alt * 4.0);
-    scatter += (vec3f(0.2, 0.5, 1.0) + vec3f(1.0, 0.4, 0.2) * 0.3) * den * step * 0.15;
+    scatter += (vec3f(0.2, 0.5, 1.0) + vec3f(1.0, 0.4, 0.2) * 0.3) * den * astep * 0.15;
   }
   return scatter;
 }
@@ -872,13 +752,12 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let time = globals.time;
   let camDist = 75.0 - time * 0.3; let camAngle = time * 0.05;
   let ro = vec3f(sin(camAngle) * 20.0, sin(time * 0.1) * 4.0 + 8.0, camDist);
-  let forward = normalize(PLANET_POS - ro);
-  let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
-  let up = cross(forward, right);
-  let rd = normalize(forward + uv.x * right + uv.y * up);
+  let fwd = normalize(PLANET_POS - ro);
+  let rgt = normalize(cross(vec3f(0.0, 1.0, 0.0), fwd));
+  let up = cross(fwd, rgt);
+  let rd = normalize(fwd + uv.x * rgt + uv.y * up);
   let sunDir = normalize(vec3f(0.5, 0.3, -1.0));
   
-  // Background with nebula and sun glow (stars rendered separately as particles)
   var col = vec3f(0.0);
   col += pow(max(dot(rd, sunDir), 0.0), 256.0) * 2.0 * vec3f(1.0, 0.9, 0.7);
   col += pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.3 * vec3f(1.0, 0.9, 0.7);
@@ -912,7 +791,6 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     if (hit.mat == 1) { sc += vec3f(0.3, 0.5, 1.0) * fres * 0.5; }
     col = sc;
   } else {
-    // Only add atmosphere if we didn't hit the planet/moon
     col += atmosphere(ro, rd);
   }
   
@@ -925,12 +803,7 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 \`);
 
 function frame() {
-  // Draw stars first
-  stars.draw();
-  // Draw planet on top (autoClear is false after first draw)
-  ctx.autoClear = false;
   alienPlanet.draw();
-  ctx.autoClear = true;
   requestAnimationFrame(frame);
 }
 frame();
