@@ -17,9 +17,9 @@ import {
 // ============================================================================
 
 // Particle system
-const NUM_PARTICLES = 12000;
-const MAX_LIFETIME = 10;
-const TRIANGLE_RADIUS = 3;
+const NUM_PARTICLES = 30000;
+const MAX_LIFETIME = 8;
+const TRIANGLE_RADIUS = 2;
 const VELOCITY_SCALE = 0.04;
 
 // Initial spawn randomness
@@ -32,19 +32,27 @@ const FORCE_STRENGTH = 0.13; // How strongly SDF pushes particles
 const VELOCITY_DAMPING = 0.995; // Velocity decay per frame (0-1)
 const RESPAWN_VELOCITY_JITTER = INITIAL_VELOCITY_JITTER; // Velocity randomness on respawn
 const SDF_UPDATE_INTERVAL = 0.6; // Update SDF texture once per second
+const SHOOT_LINE_WIDTH = 0.3; // Width of the shoot line effect
 
 // Rendering
 const POINT_SIZE = 0.3;
-const FADE_DURATION = MAX_LIFETIME * .4; // How long the fade-out takes
+const FADE_IN_DURATION = MAX_LIFETIME * 0.1; // How long the fade-in takes
+const FADE_DURATION = MAX_LIFETIME * 1.4; // How long the fade-out takes
 const PARTICLE_OFFSET_Y = -0.95; // Y offset for particle rendering
 
-// Postprocessing blur
-const BLUR_MAX_SAMPLES = 16;
-const BLUR_MAX_SIZE = 0.01; // Maximum blur radius in NDC
+// Postprocessing chromatic aberration
+const CHROMATIC_MAX_OFFSET = 0.02; // Maximum chromatic offset in NDC
+const CHROMATIC_ANGLE = -23;
 
-// Debug options
-const DEBUG_SDF_TEXTURE_DEFAULT = false; // Show SDF texture visualization by default
-const DEBUG_BLUR_DEFAULT = false; // Show blur size visualization by default
+// Render target options for debug selector
+type RenderTargetOption =
+  | "final"
+  | "final-no-post"
+  | "sdf-texture"
+  | "gradient-texture"
+  | "blur-size";
+
+const DEFAULT_RENDER_TARGET: RenderTargetOption = "final";
 
 // ============================================================================
 // Shared WGSL Code - SDF and Blur Functions
@@ -102,33 +110,28 @@ const SDF_FUNCTIONS_WGSL = /* wgsl */ `
     var noiseScale = step(sdf, 0.) * (1. - u.focused);
     noiseScale = noiseScale * pow(clamp(1. - sdf * 0.1 - 0.2, 0., 1.), 0.5);
 
-    return sdf - noiseSample * noiseScale;
+    return sdf;
   }
 `;
 
 // Extracted blur size calculation for consistency between blur and debug shaders
 const BLUR_CALCULATION_WGSL = /* wgsl */ `
-  // Calculate blur size with diagonal split through center at a given angle
-  // One side has no blur, other side has radial blur
+  // Calculate blur size based on rotated absolute X value
+  // Blur increases as you move away from the center line (rotated by angle)
   fn calculateBlurSize(uv: vec2f, maxBlurSize: f32, angleRadians: f32) -> f32 {
-    // Calculate distance from center (circular component)
-    let centerDist = length(uv - 0.5) * sqrt(2.0) * 2.;
-    
-    // Convert UV to centered coordinates
+    // Convert UV to centered coordinates (-0.5 to 0.5)
     let centered = uv - 0.5;
     
-    // Rotate the split line by the given angle
-    // We calculate signed distance to a line through origin at the given angle
-    // Line perpendicular to angle: cos(angle)*x + sin(angle)*y = 0
-    let diagonalDist = cos(angleRadians) * centered.x + sin(angleRadians) * centered.y;
+    // Rotate coordinates by the angle
+    let cosA = cos(angleRadians);
+    let sinA = sin(angleRadians);
+    let rotatedX = centered.x * cosA - centered.y * sinA;
     
-    // Convert to 0-1 factor with smooth transition
-    // smoothstep gives smooth transition across the diagonal line
-    let diagonalFactor = smoothstep(-0.1, 0.1, diagonalDist);
+    // Use absolute value of rotated X, scaled to 0-1 range
+    // Multiply by 2 since centered goes from -0.5 to 0.5
+    let blurFactor = clamp(abs(rotatedX) * 2.0, 0.0, 1.0);
     
-    // Multiply circular blur by diagonal factor
-    // Result: blur=0 on one side, full radial blur on the other
-    return centerDist * maxBlurSize * diagonalFactor;
+    return blurFactor * maxBlurSize;
   }
   
   // Get normalized blur amount for visualization (0 to 1)
@@ -170,30 +173,75 @@ export default function Page() {
   const focusedRef = useRef(0);
   const bumpIntensityRef = useRef(0);
   const bumpProgressRef = useRef(0);
-  const debugSdfRef = useRef(false);
-  const debugSdfTextureRef = useRef(DEBUG_SDF_TEXTURE_DEFAULT);
-  const debugBlurRef = useRef(DEBUG_BLUR_DEFAULT);
-  const blurAngleRef = useRef(26);
+  const renderTargetRef = useRef<RenderTargetOption>(DEFAULT_RENDER_TARGET);
+  const chromaticAngleRef = useRef(CHROMATIC_ANGLE);
+  const useZoomBlurRef = useRef(false);
+  const darkModeRef = useRef(true);
+
+  // Mouse interaction refs
+  const mousePositionRef = useRef({ x: 0, y: 0 });
+  const mouseForceRef = useRef(0.5);
+  const mouseRadiusRef = useRef(1.0);
 
   // Leva controls
   useControls({
-    debugSdfTexture: {
-      value: DEBUG_SDF_TEXTURE_DEFAULT,
-      label: "Debug SDF Texture",
-      onChange: (v) => { debugSdfTextureRef.current = v; },
+    renderTarget: {
+      value: DEFAULT_RENDER_TARGET,
+      options: {
+        "Final (Postprocessing)": "final",
+        "Final (No Postprocessing)": "final-no-post",
+        "SDF Texture": "sdf-texture",
+        "Gradient Texture": "gradient-texture",
+        "Blur Size": "blur-size",
+      },
+      label: "Render Target",
+      onChange: (v: RenderTargetOption) => {
+        renderTargetRef.current = v;
+      },
     },
-    debugBlur: {
-      value: DEBUG_BLUR_DEFAULT,
-      label: "Debug Blur Size",
-      onChange: (v) => { debugBlurRef.current = v; },
-    },
-    blurAngle: {
-      value: 26,
+    chromaticAngle: {
+      value: CHROMATIC_ANGLE,
       min: -180,
       max: 180,
       step: 1,
-      label: "Blur Angle (deg)",
-      onChange: (v) => { blurAngleRef.current = v; },
+      label: "Chromatic Angle (deg)",
+      onChange: (v) => {
+        chromaticAngleRef.current = v;
+      },
+    },
+    useZoomBlur: {
+      value: false,
+      label: "Zoom Blur (vs Radial)",
+      onChange: (v) => {
+        useZoomBlurRef.current = v;
+      },
+    },
+    darkMode: {
+      value: true,
+      label: "Dark Mode",
+      onChange: (v: boolean) => {
+        darkModeRef.current = v;
+      },
+    },
+    mouseForce: {
+      value: 0.5,
+      min: 0,
+      max: 2,
+      step: 0.01,
+      label: "Mouse Force",
+      onChange: (v: number) => {
+        mouseForceRef.current = v;
+      },
+    },
+    mouseRadius: {
+      value: 1.0,
+      min: 0.5,
+      max: 10,
+      step: 0.1,
+      label: "Mouse Radius",
+      onChange: (v: number) => {
+        mouseRadiusRef.current = v;
+      },
     },
   });
 
@@ -201,6 +249,9 @@ export default function Page() {
     let ctx: GPUContext | null = null;
     let animationId: number;
     let disposed = false;
+
+    // Capture canvas ref for cleanup
+    const canvas = canvasRef.current;
 
     // Particle data
     let positionBuffer: StorageBuffer;
@@ -212,20 +263,25 @@ export default function Page() {
     // Shaders
     let computeAtoB: ComputeShader;
     let computeBtoA: ComputeShader;
-    let particleMaterial: Material;
-    let debugPass: Pass;
+    let particleMaterialDark: Material;
+    let particleMaterialLight: Material;
     let sdfTextureDebugPass: Pass;
+    let gradientTextureDebugPass: Pass;
     let blurPass: Pass;
     let blurDebugPass: Pass;
     let sdfPass: Pass;
+    let gradientPass: Pass;
 
     // Render targets
     let renderTarget: ReturnType<GPUContext["target"]>;
     let sdfTarget: ReturnType<GPUContext["target"]> | null = null;
+    let gradientTarget: ReturnType<GPUContext["target"]> | null = null;
 
     // Custom samplers
     let blurSampler: Sampler;
     let sdfSampler: Sampler;
+    let sdfNearestSampler: Sampler;
+    let gradientSampler: Sampler;
 
     // SDF texture state
     let needsSdfUpdate = true;
@@ -239,8 +295,32 @@ export default function Page() {
     // ResizeObserver for tracking canvas size
     let resizeObserver: ResizeObserver;
 
+    // Mouse event handler - just converts screen coords to world space
+    function handleMouseMove(e: MouseEvent) {
+      if (!canvasRef.current) return;
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      // Normalize to [0, 1]
+      const normalizedX = (e.clientX - rect.left) / rect.width;
+      const normalizedY = (e.clientY - rect.top) / rect.height;
+
+      // Convert to clip space [-1, 1], with Y flipped
+      const clipX = normalizedX * 2 - 1;
+      const clipY = -(normalizedY * 2 - 1);
+
+      // Convert to world space (matching particle coordinate system)
+      const aspect = rect.width / rect.height;
+      const worldX = clipX * aspect * 5;
+      const worldY = clipY * 5 - PARTICLE_OFFSET_Y;
+
+      mousePositionRef.current = { x: worldX, y: worldY };
+    }
+
     async function init() {
       if (!canvasRef.current) return;
+
+      // Add mouse event listener
+      window.addEventListener("mousemove", handleMouseMove);
 
       // Check WebGPU support
       if (!gpu.isSupported()) {
@@ -308,35 +388,66 @@ export default function Page() {
       lifetimeBuffer.write(lifetimeArray);
 
       // Create SDF target at half resolution (must be before compute shaders)
-      const initialSdfWidth = Math.max(1, Math.floor(canvasRef.current.width / 2));
-      const initialSdfHeight = Math.max(1, Math.floor(canvasRef.current.height / 2));
-      
+      const initialSdfWidth = Math.max(
+        1,
+        Math.floor(canvasRef.current.width / 2)
+      );
+      const initialSdfHeight = Math.max(
+        1,
+        Math.floor(canvasRef.current.height / 2)
+      );
+
       // Use 16-bit float format to properly store negative SDF values with good precision
-      sdfTarget = ctx.target(initialSdfWidth, initialSdfHeight, { format: "r16float" });
+      sdfTarget = ctx.target(initialSdfWidth, initialSdfHeight, {
+        format: "r16float",
+      });
+
+      // Gradient target - same size as SDF, uses RG16float for negative gradient values
+      gradientTarget = ctx.target(initialSdfWidth, initialSdfHeight, {
+        format: "rg16float",
+      });
+
       currentCanvasWidth = canvasRef.current.width;
       currentCanvasHeight = canvasRef.current.height;
       needsSdfUpdate = true;
-      
+
       // Helper to resize SDF target when canvas size changes
       function resizeSdfTarget(width: number, height: number) {
-        if (!sdfTarget) return;
-        
+        if (!sdfTarget || !gradientTarget) return;
+
         const sdfWidth = Math.max(1, Math.floor(width / 2));
         const sdfHeight = Math.max(1, Math.floor(height / 2));
-        
+
         // Use built-in resize method instead of creating new target
         sdfTarget.resize(sdfWidth, sdfHeight);
-        
+        gradientTarget.resize(sdfWidth, sdfHeight);
+
         currentCanvasWidth = width;
         currentCanvasHeight = height;
         needsSdfUpdate = true;
       }
 
       // Create custom samplers
-      // SDF sampler with linear filtering for smooth gradient sampling
+      // SDF sampler with linear filtering for smooth gradient sampling (used for debug visualization)
       sdfSampler = ctx.createSampler({
         magFilter: "linear",
         minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+
+      // SDF nearest sampler for fast gradient calculation pass
+      sdfNearestSampler = ctx.createSampler({
+        magFilter: "nearest",
+        minFilter: "nearest",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+
+      // Gradient sampler with nearest filtering for fast particle sampling
+      gradientSampler = ctx.createSampler({
+        magFilter: "nearest",
+        minFilter: "nearest",
         addressModeU: "clamp-to-edge",
         addressModeV: "clamp-to-edge",
       });
@@ -348,16 +459,21 @@ export default function Page() {
           time: f32,
           focused: f32,
           triangleRadius: f32,
-          sdfEpsilon: f32,
           forceStrength: f32,
           velocityDamping: f32,
           velocityScale: f32,
           maxLifetime: f32,
           offsetY: f32,
+          mouseX: f32,
+          mouseY: f32,
+          mouseDirX: f32,
+          mouseDirY: f32,
+          mouseForce: f32,
+          mouseRadius: f32,
         }
         @group(1) @binding(0) var<uniform> u: ComputeUniforms;
-        @group(1) @binding(1) var sdfTexture: texture_2d<f32>;
-        @group(1) @binding(2) var sdfSampler: sampler;
+        @group(1) @binding(1) var gradientTexture: texture_2d<f32>;
+        @group(1) @binding(2) var gradientSampler: sampler;
         @group(1) @binding(3) var<storage, read_write> positions: array<vec2f>;
         @group(1) @binding(4) var<storage, read> originalPositions: array<vec2f>;
         @group(1) @binding(5) var<storage, read> velocityRead: array<vec2f>;
@@ -374,7 +490,7 @@ export default function Page() {
           return hash(seed) * 2.0 - 1.0;
         }
 
-        // Convert world position to UV coordinates for SDF texture sampling
+        // Convert world position to UV coordinates for texture sampling
         fn worldToUV(worldPos: vec2f) -> vec2f {
           // World space is centered at origin, ranging roughly [-aspect*5, aspect*5] x [-5, 5]
           // Convert to NDC [-1, 1]
@@ -384,14 +500,18 @@ export default function Page() {
           return uv;
         }
 
-        // Sample SDF from pre-rendered texture
-        fn sampleSdf(worldPos: vec2f) -> f32 {
-          // Adjust for SDF texture coordinate space (subtract same offset used when rendering SDF)
+        // Sample gradient from pre-rendered gradient texture
+        // Returns vec3f: (gradX, gradY, sdfSign)
+        fn sampleGradient(worldPos: vec2f) -> vec3f {
+          // Adjust for texture coordinate space (subtract same offset used when rendering)
           let adjustedPos = worldPos + vec2f(0.0, u.offsetY);
           let uv = worldToUV(adjustedPos);
-          // Read SDF directly from r16float texture (no unpacking needed!)
-          let sdf = textureSampleLevel(sdfTexture, sdfSampler, uv, 0.0).r;
-          return sdf;
+          // Read gradient directly from rg16float texture - R=gradX, G=gradY
+          // The B channel contains the SDF sign encoded as 0.0 (negative) or 1.0 (positive)
+          let sample = textureSampleLevel(gradientTexture, gradientSampler, uv, 0.0);
+          // Decode sdfSign: B channel is 0.5 + 0.5 * sign, so sign = (B - 0.5) * 2
+          let sdfSign = sign(sample.b - 0.5);
+          return vec3f(sample.r, sample.g, sdfSign);
         }
 
         @compute @workgroup_size(64, 1, 1)
@@ -404,23 +524,33 @@ export default function Page() {
           var vel = velocityRead[index];
           var life = lifetimes[index];
 
-          // Sample SDF gradient from texture (much faster than computing!)
-          let sdfCenter = sampleSdf(pos);
-          let sdfRight = sampleSdf(pos + vec2f(u.sdfEpsilon, 0.0));
-          let sdfTop = sampleSdf(pos + vec2f(0.0, u.sdfEpsilon));
+          // Sample precomputed gradient from texture (single sample instead of 3!)
+          let gradientData = sampleGradient(pos);
+          let gradient = vec2f(gradientData.x, gradientData.y);
+          let sdfSign = gradientData.z;
 
-          let gradX = (sdfRight - sdfCenter) / u.sdfEpsilon;
-          let gradY = (sdfTop - sdfCenter) / u.sdfEpsilon;
-          let gradient = vec2f(gradX, gradY);
-
-          let sdfSign = sign(sdfCenter);
-
-          // Apply force
+          // Apply SDF force
           let force = gradient * u.forceStrength * sdfSign;
 
-          // Update velocity with damping
+          // Update velocity with damping and SDF force
           vel *= u.velocityDamping;
           vel += force;
+
+          // Mouse push force (applied after damping so it's not weakened)
+          // Particles are pushed in the direction the mouse is moving
+          let mousePos = vec2f(u.mouseX, u.mouseY);
+          let mouseDir = vec2f(u.mouseDirX, u.mouseDirY);
+          let toMouse = mousePos - pos;
+          let distToMouse = length(toMouse);
+          
+          // Apply push force if within radius
+          if (distToMouse < u.mouseRadius && distToMouse > 0.01) {
+            // Strength falls off with distance from mouse
+            let falloff = 1.0 - (distToMouse / u.mouseRadius);
+            // Push in the direction the mouse is moving
+            let pushForce = mouseDir * u.mouseForce * falloff * falloff;
+            vel += pushForce;
+          }
 
           // Update position
           pos += vel * u.deltaTime * u.velocityScale;
@@ -455,24 +585,29 @@ export default function Page() {
         time: { value: 0.0 },
         focused: { value: 0.0 },
         triangleRadius: { value: TRIANGLE_RADIUS },
-        sdfEpsilon: { value: SDF_EPSILON },
         forceStrength: { value: FORCE_STRENGTH },
         velocityDamping: { value: VELOCITY_DAMPING },
         velocityScale: { value: VELOCITY_SCALE },
         maxLifetime: { value: MAX_LIFETIME },
         offsetY: { value: PARTICLE_OFFSET_Y },
+        mouseX: { value: 0.0 },
+        mouseY: { value: 0.0 },
+        mouseDirX: { value: 0.0 },
+        mouseDirY: { value: 0.0 },
+        mouseForce: { value: 0.5 },
+        mouseRadius: { value: 1.0 },
       };
 
       const computeUniformsAtoB = {
         ...computeUniforms,
-        sdfTexture: { value: sdfTarget!.texture },
-        sdfSampler: { value: sdfSampler },
+        gradientTexture: { value: gradientTarget!.texture },
+        gradientSampler: { value: gradientSampler },
       };
 
       const computeUniformsBtoA = {
         ...computeUniforms,
-        sdfTexture: { value: sdfTarget!.texture },
-        sdfSampler: { value: sdfSampler },
+        gradientTexture: { value: gradientTarget!.texture },
+        gradientSampler: { value: gradientSampler },
       };
 
       computeAtoB = ctx.compute(computeShaderCode, {
@@ -498,6 +633,7 @@ export default function Page() {
         struct RenderUniforms {
           offsetY: f32,
           pointSize: f32,
+          fadeInEnd: f32,
           fadeStart: f32,
           fadeEnd: f32,
           triangleRadius: f32,
@@ -505,6 +641,8 @@ export default function Page() {
           bumpProgress: f32,
           maxBlurSize: f32,
           blurAngle: f32,
+          postprocessingEnabled: f32,
+          particleColor: vec3f,
         }
         @group(1) @binding(0) var<uniform> u: RenderUniforms;
         @group(1) @binding(1) var<storage, read> positions: array<vec2f>;
@@ -567,8 +705,8 @@ export default function Page() {
           // Get normalized blur amount (0 to 1)
           let blurFactor = getBlurNormalized(screenUV, u.maxBlurSize, u.blurAngle);
           
-          // Scale particle from 1x to 2x based on blur
-          let sizeMultiplier = 1.0 + blurFactor;
+          // Scale particle from 1x to 2x based on blur, but only when postprocessing is enabled
+          let sizeMultiplier = select(1.0, 1.0 + blurFactor, u.postprocessingEnabled > 0.5);
           
           // Calculate particle size in clip space with blur scaling
           let particleSize = u.pointSize * 0.01 * sizeMultiplier;
@@ -594,8 +732,10 @@ export default function Page() {
           // Smooth edge for anti-aliasing
           let edgeSoftness = smoothstep(0.5, 0.3, d);
 
-          // Lifetime fade
-          let lifetimeOpacity = 1.0 - smoothstep(u.fadeStart, u.fadeEnd, in.life);
+          // Lifetime fade (in and out)
+          let fadeIn = smoothstep(0.0, u.fadeInEnd, in.life);
+          let fadeOut = 1.0 - smoothstep(u.fadeStart, u.fadeEnd, in.life);
+          let lifetimeOpacity = fadeIn * fadeOut;
 
           // Bump effect based on SDF distance
           let bumpDist = abs(in.sdfDist - u.bumpProgress);
@@ -606,31 +746,44 @@ export default function Page() {
           let finalOpacity = mix(baseOpacity, 1.0, bumpEffect);
 
           let alpha = lifetimeOpacity * finalOpacity * edgeSoftness;
-          return vec4f(1.0, 1.0, 1.0, alpha);
+          return vec4f(u.particleColor, alpha);
         }
       `;
 
       const renderUniforms = {
         offsetY: { value: PARTICLE_OFFSET_Y },
         pointSize: { value: POINT_SIZE },
+        fadeInEnd: { value: FADE_IN_DURATION },
         fadeStart: { value: MAX_LIFETIME - FADE_DURATION },
         fadeEnd: { value: MAX_LIFETIME },
         triangleRadius: { value: TRIANGLE_RADIUS },
         bumpIntensity: { value: 0.0 },
         bumpProgress: { value: 0.0 },
-        maxBlurSize: { value: BLUR_MAX_SIZE },
+        maxBlurSize: { value: CHROMATIC_MAX_OFFSET },
         blurAngle: { value: 0 }, // Will be updated in render loop
+        postprocessingEnabled: { value: 1.0 }, // Will be updated in render loop
+        particleColor: { value: [1.0, 1.0, 1.0] }, // Will be updated based on dark mode
       };
 
-      particleMaterial = ctx.material(particleShaderCode, {
+      // Dark mode material (additive blending - white on black)
+      particleMaterialDark = ctx.material(particleShaderCode, {
         vertexCount: 6,
         instances: NUM_PARTICLES,
         blend: "additive",
         uniforms: renderUniforms,
       });
+      particleMaterialDark.storage("positions", positionBuffer);
+      particleMaterialDark.storage("lifetimes", lifetimeBuffer);
 
-      particleMaterial.storage("positions", positionBuffer);
-      particleMaterial.storage("lifetimes", lifetimeBuffer);
+      // Light mode material (alpha blending - black on white)
+      particleMaterialLight = ctx.material(particleShaderCode, {
+        vertexCount: 6,
+        instances: NUM_PARTICLES,
+        blend: "alpha",
+        uniforms: renderUniforms,
+      });
+      particleMaterialLight.storage("positions", positionBuffer);
+      particleMaterialLight.storage("lifetimes", lifetimeBuffer);
 
       // Create render target for postprocessing (auto-sized to canvas)
       renderTarget = ctx.target();
@@ -683,63 +836,133 @@ export default function Page() {
         uniforms: sdfUniforms,
       });
 
-      // Create debug pass for visualizing the SDF
-      const debugShaderCode = /* wgsl */ `
-        struct DebugUniforms {
-          time: f32,
+      // Create gradient pass - calculates SDF gradients from the SDF texture
+      const gradientShaderCode = /* wgsl */ `
+        struct GradientUniforms {
+          sdfEpsilon: f32,
           triangleRadius: f32,
-          focused: f32,
+          shootLineStrength: f32,
+          shootLineWidth: f32,
+          offsetY: f32,
         }
-        @group(1) @binding(0) var<uniform> u: DebugUniforms;
+        @group(1) @binding(0) var<uniform> u: GradientUniforms;
+        @group(1) @binding(1) var sdfTexture: texture_2d<f32>;
+        @group(1) @binding(2) var sdfSampler: sampler;
 
-        ${SDF_FUNCTIONS_WGSL}
+        // Calculate signed distance from point to line segment
+        fn distToLineSegment(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+          let pa = p - a;
+          let ba = b - a;
+          let t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+          return length(pa - ba * t);
+        }
+
+        // Calculate projection parameter t (0 = at center, 1 = at vertex)
+        fn projectOnLine(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+          let pa = p - a;
+          let ba = b - a;
+          return dot(pa, ba) / dot(ba, ba);
+        }
 
         @fragment
         fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-          // Convert pixel coords to world space (matching particle system scale)
+          // Get texture dimensions for proper pixel offset calculation
+          let texSize = vec2f(textureDimensions(sdfTexture));
+          let pixelSize = 1.0 / texSize;
+          
+          // Convert pixel coords to UV
           let uv = pos.xy / globals.resolution;
-          // Map pixel coordinate to normalized device coordinates (NDC): [-1,1] with y up
+          
+          // Convert UV to world space (matching the SDF pass coordinate system)
           let centered = uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
-          let worldPos = centered * vec2f(globals.aspect * 5.0, 5.0);
-
-          // Sample the animated SDF
-          let sdf = animatedSdf(worldPos, u.triangleRadius, u.time);
-
-          // Visualize: negative (inside) = blue, positive (outside) = red
-          // Gradient shows distance
-          let inside = sdf < 0.0;
-          let dist = abs(sdf);
-          let normalizedDist = 1.0 - exp(-dist * 0.5);
-
-          var color: vec3f;
-          if (inside) {
-            color = vec3f(0.0, 0.2, 0.8) * (1.0 - normalizedDist);
-          } else {
-            color = vec3f(0.8, 0.2, 0.0) * (1.0 - normalizedDist);
-          }
-
-          // Add contour lines
-          let contourFreq = 0.5;
-          let contour = abs(fract(sdf * contourFreq) - 0.5) * 2.0;
-          let contourLine = smoothstep(0.9, 1.0, contour);
-          color = mix(color, vec3f(1.0), contourLine * 0.3);
-
-          // Highlight the zero crossing (edge)
-          let edge = smoothstep(0.1, 0.0, abs(sdf));
-          color = mix(color, vec3f(1.0, 1.0, 1.0), edge);
-
-          return vec4f(color, 1.0);
+          let worldPos = centered * vec2f(globals.aspect * 5.0, 5.0) - vec2f(0.0, u.offsetY);
+          
+          // Sample SDF at center
+          let sdfCenter = textureSample(sdfTexture, sdfSampler, uv).r;
+          
+          // Sample SDF at offset positions using world-space epsilon
+          // The SDF texture covers world space [-aspect*5, aspect*5] x [-5, 5]
+          // So we need to convert world-space epsilon to UV-space offset
+          let worldToUvScaleX = 0.5 / (globals.aspect * 5.0);
+          let worldToUvScaleY = 0.5 / 5.0;
+          let uvEpsilonX = u.sdfEpsilon * worldToUvScaleX;
+          let uvEpsilonY = u.sdfEpsilon * worldToUvScaleY;
+          
+          let sdfRight = textureSample(sdfTexture, sdfSampler, uv + vec2f(uvEpsilonX, 0.0)).r;
+          let sdfTop = textureSample(sdfTexture, sdfSampler, uv + vec2f(0.0, -uvEpsilonY)).r; // Negative because UV Y is flipped
+          
+          // Calculate gradients
+          let sdfSign = sign(sdfCenter);
+          var gradX = (sdfRight - sdfCenter) / u.sdfEpsilon;
+          gradX *= -sdfSign;
+          var gradY = (sdfTop - sdfCenter) / u.sdfEpsilon;
+          gradY *= -sdfSign;
+          
+          // ============================================================
+          // SHOOT LINE: infinite line through center and bottom-right vertex
+          // Particles are pushed OUTWARD from center in both directions
+          // ============================================================
+          // Triangle geometry (equilateral, pointing up, IQ SDF convention)
+          // Note: animatedSdf uses (r + 0.7) as the effective radius
+          let k = sqrt(3.0);
+          let r = u.triangleRadius + 0.7; // Match the actual triangle size in animatedSdf
+          
+          // The triangle center is at (0, 0) in the SDF coordinate space (worldPos)
+          let triangleCenter = vec2f(0.0, 0.0);
+          
+          // Bottom-right vertex (using effective radius)
+          let bottomRightVertex = vec2f(r, -r / k);
+          
+          // Direction from center to vertex
+          let toVertex = normalize(bottomRightVertex - triangleCenter);
+          
+          // Create an infinite line by extending far in both directions
+          let lineStart = triangleCenter - toVertex * 20.0;
+          let lineEnd = triangleCenter + toVertex * 20.0;
+          
+          // Calculate distance from current world position to the infinite line
+          let distToLine = distToLineSegment(worldPos, lineStart, lineEnd);
+          
+          // Calculate which side of center we're on using projection
+          // t > 0 means toward vertex (bottom-right), t < 0 means opposite side (top-left)
+          let t = projectOnLine(worldPos, triangleCenter, lineEnd);
+          
+          // Determine shoot direction based on which side of center
+          // Positive t (vertex side): shoot toward vertex (outward)
+          // Negative t (opposite side): shoot away from vertex (outward)
+          let shootDir = -select(-toVertex, toVertex, t > 0.12);
+          
+          // Line influence based on distance only (affects entire line)
+          let lineInfluence = smoothstep(u.shootLineWidth, 0.0, distToLine) 
+                           * u.shootLineStrength;
+          
+          // Blend the shoot direction into the gradient
+          // Particles are pushed outward from center in both directions
+          gradX = mix(gradX, shootDir.x * 3.0, lineInfluence);
+          gradY = mix(gradY, shootDir.y * 3.0, lineInfluence);
+          
+          // Encode SDF sign in B channel: 0.0 for negative, 1.0 for positive
+          // For the shoot line, force positive (outside) to push particles outward
+          var sdfSignEncoded = 0.5 + 0.5 * sign(sdfCenter);
+          sdfSignEncoded = mix(sdfSignEncoded, 1.0, lineInfluence); // Force positive on shoot line
+          
+          // Output: R=gradX, G=gradY, B=sdfSign encoded
+          return vec4f(gradX, gradY, sdfSignEncoded, 1.0);
         }
       `;
 
-      const debugUniforms = {
-        time: { value: 0.0 },
+      const gradientUniforms = {
+        sdfEpsilon: { value: SDF_EPSILON },
         triangleRadius: { value: TRIANGLE_RADIUS },
-        focused: { value: 0.0 },
+        shootLineStrength: { value: 1.0 },
+        shootLineWidth: { value: SHOOT_LINE_WIDTH },
+        offsetY: { value: PARTICLE_OFFSET_Y },
+        sdfTexture: { value: sdfTarget!.texture },
+        sdfSampler: { value: sdfNearestSampler },
       };
 
-      debugPass = ctx.pass(debugShaderCode, {
-        uniforms: debugUniforms,
+      gradientPass = ctx.pass(gradientShaderCode, {
+        uniforms: gradientUniforms,
       });
 
       // Create SDF texture debug pass - visualizes the precomputed SDF texture
@@ -789,93 +1012,173 @@ export default function Page() {
         uniforms: sdfTextureDebugUniforms,
       });
 
-      // Create blur postprocessing pass
-      const blurShaderCode = /* wgsl */ `
-        struct BlurUniforms {
-          maxBlurSize: f32,
-          samples: f32,
-          angle: f32,
+      // Create gradient texture debug pass - visualizes the precomputed gradient texture
+      // This pass samples the gradient texture using the SAME coordinate transform that particles use,
+      // so the visualization aligns with where particles actually sample
+      const gradientTextureDebugShaderCode = /* wgsl */ `
+        struct GradientDebugUniforms {
+          offsetY: f32,
         }
-        @group(1) @binding(0) var<uniform> u: BlurUniforms;
+        @group(1) @binding(0) var<uniform> u: GradientDebugUniforms;
+        @group(1) @binding(1) var gradientTexture: texture_2d<f32>;
+        @group(1) @binding(2) var gradientSampler: sampler;
+
+        @fragment
+        fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+          // Convert screen position to clip space [-1, 1]
+          let screenUV = pos.xy / globals.resolution;
+          let clipPos = screenUV * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0);
+          
+          // Convert clip position to world position (inverse of particle rendering)
+          // Particle rendering does: clipPos = (worldPos + offset) / scale
+          // So: worldPos = clipPos * scale - offset
+          let scale = vec2f(globals.aspect * 5.0, 5.0);
+          let worldPos = clipPos * scale - vec2f(0.0, u.offsetY);
+          
+          // Now sample the gradient at where a particle at this world position would sample
+          // Particle sampling does: adjustedPos = worldPos + offset, then converts to UV
+          let adjustedPos = worldPos + vec2f(0.0, u.offsetY);
+          let ndc = adjustedPos / scale;
+          let sampleUV = ndc * vec2f(0.5, -0.5) + 0.5;
+          
+          let sample = textureSample(gradientTexture, gradientSampler, sampleUV);
+          let gradX = sample.r;
+          let gradY = sample.g;
+          let sdfSignEncoded = sample.b;
+          
+          // Decode SDF sign: B channel is 0.5 + 0.5 * sign
+          let inside = sdfSignEncoded < 0.5;
+          
+          // Visualize gradient magnitude
+          let gradMagnitude = length(vec2f(gradX, gradY));
+          let normalizedMag = 1.0 - exp(-gradMagnitude * 2.0);
+          
+          // Color: gradient direction mapped to hue, magnitude to brightness
+          // Red = +X, Green = +Y, Blue = -X, Yellow = -Y (approximate)
+          let gradDir = normalize(vec2f(gradX, gradY) + 0.0001);
+          
+          // Map gradient direction to color
+          var color = vec3f(
+            gradDir.x * 0.5 + 0.5,  // Red for +X
+            gradDir.y * 0.5 + 0.5,  // Green for +Y
+            0.5 - gradDir.x * 0.25 - gradDir.y * 0.25  // Blue complement
+          );
+          
+          // Modulate by magnitude
+          color = color * normalizedMag;
+          
+          // Tint based on inside/outside (blue tint inside, red tint outside)
+          if (inside) {
+            color = color * vec3f(0.7, 0.8, 1.2);
+          } else {
+            color = color * vec3f(1.2, 0.9, 0.7);
+          }
+
+          return vec4f(color, 1.0);
+        }
+      `;
+
+      const gradientTextureDebugUniforms = {
+        offsetY: { value: PARTICLE_OFFSET_Y },
+        gradientTexture: { value: gradientTarget!.texture },
+        gradientSampler: { value: sdfSampler }, // Use linear sampler for smooth visualization
+      };
+
+      gradientTextureDebugPass = ctx.pass(gradientTextureDebugShaderCode, {
+        uniforms: gradientTextureDebugUniforms,
+      });
+
+      // Create radial/zoom chromatic aberration postprocessing pass
+      const chromaticShaderCode = /* wgsl */ `
+        struct ChromaticUniforms {
+          maxOffset: f32,
+          angle: f32,
+          samples: f32,
+          useZoom: f32,
+        }
+        @group(1) @binding(0) var<uniform> u: ChromaticUniforms;
         @group(1) @binding(1) var inputTex: texture_2d<f32>;
         @group(1) @binding(2) var inputSampler: sampler;
 
         ${BLUR_CALCULATION_WGSL}
-
-        // Pixel hash for random rotation
-        fn pixelHash(p: vec2u) -> f32 {
-          var n = p.x * 3u + p.y * 113u;
-          n = (n << 13u) ^ n;
-          n = n * (n * n * 15731u + 789221u) + 1376312589u;
-          return f32(n) * (1.0 / f32(0xffffffffu));
-        }
-
-        // Vogel disk sampling pattern
-        fn vogelDisk(sampleIndex: f32, samplesCount: f32, phi: f32) -> vec2f {
-          let goldenAngle = 2.399963; // radians
-          let r = sqrt(sampleIndex + 0.5) / sqrt(samplesCount);
-          let theta = sampleIndex * goldenAngle + phi;
-          return vec2f(cos(theta), sin(theta)) * r;
-        }
 
         @fragment
         fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
           // Convert to UV coordinates
           let uv = pos.xy / globals.resolution;
           
-          // Use shared blur size calculation with angle
-          let blurSize = calculateBlurSize(uv, u.maxBlurSize, u.angle);
+          // Use the angle-based calculation for intensity
+          let chromaticOffset = calculateBlurSize(uv, u.maxOffset, u.angle);
           
-          // Generate random rotation per pixel using hash
-          let hash = pixelHash(vec2u(pos.xy));
-          let rotation = hash * 6.28318; // 0 to 2π
+          // Calculate position from center in aspect-corrected space
+          let center = vec2f(0.5, 0.5);
+          let fromCenter = uv - center;
+          // Correct for aspect ratio: scale X by aspect to make circles circular
+          let fromCenterCorrected = vec2f(fromCenter.x * globals.aspect, fromCenter.y);
+          let distFromCenter = length(fromCenterCorrected);
           
-          // Accumulate samples using Vogel disk - OPTIMIZED: single sample per iteration
-          var color = vec3f(0.0);
+          // Radial direction (for zoom blur): points outward from center
+          let radialCorrected = select(vec2f(0.0, 1.0), fromCenterCorrected / distFromCenter, distFromCenter > 0.001);
+          
+          // Tangent direction (for radial blur): perpendicular to radial, rotates around center
+          let tangentCorrected = vec2f(-radialCorrected.y, radialCorrected.x);
+          
+          // Choose direction based on mode
+          let dirCorrected = select(tangentCorrected, radialCorrected, u.useZoom > 0.5);
+          
+          // Convert direction back to UV space (un-correct the aspect ratio for X)
+          let sampleDir = vec2f(dirCorrected.x / globals.aspect, dirCorrected.y);
+          
+          // Multisample along chosen direction
           let sampleCount = i32(u.samples);
-          
-          // Chromatic aberration strength (applied mathematically after sampling)
-          let chromaticStrength = 1.9;
+          var r = 0.0;
+          var g = 0.0;
+          var b = 0.0;
           
           for (var i = 0; i < sampleCount; i++) {
-            let offset = vogelDisk(f32(i), u.samples, rotation);
-            // Scale offset.x by aspect ratio to create circular disk instead of elliptical
-            let aspectCorrectedOffset = vec2f(offset.x / globals.aspect, offset.y);
+            // Distribute samples from -1 to +1 along direction
+            let t = (f32(i) + 0.5) / u.samples * 2.0 - 1.0;
             
-            // Single texture sample per iteration (3x faster than before)
-            let sampleUV = uv + aspectCorrectedOffset * blurSize;
+            // Sample offset along chosen direction
+            let sampleOffset = sampleDir * chromaticOffset * t;
+            let sampleUV = uv + sampleOffset;
             let sampledColor = textureSample(inputTex, inputSampler, sampleUV).rgb;
             
-            // Apply chromatic aberration mathematically based on sample offset
-            // Samples on the right (+x) are more red, samples on the left are more blue
-            let chromaticFactor = offset.x * chromaticStrength;
-            let channelWeights = vec3f(
-              1.2 + chromaticFactor,  // Red boosted for positive x offset
-              1.1,                     // Green neutral
-              1.0 - chromaticFactor    // Blue boosted for negative x offset
-            );
+            // Weight channels based on sample position
+            // Red weighted toward +t, Blue weighted toward -t, Green in center
+            let redWeight = smoothstep(-1.0, 1.0, t);
+            let blueWeight = smoothstep(1.0, -1.0, t);
+            let greenWeight = 1.0 - abs(t);
             
-            color += sampledColor * channelWeights;
+            r += sampledColor.r * redWeight;
+            g += sampledColor.g * greenWeight;
+            b += sampledColor.b * blueWeight;
           }
           
-          // Average the samples
-          let finalColor = color / u.samples;
+          // Normalize by total weights
+          let totalRedWeight = u.samples * 0.5;
+          let totalGreenWeight = u.samples * 0.5;
+          let totalBlueWeight = u.samples * 0.5;
           
-          return vec4f(finalColor, 1.0);
+          r /= totalRedWeight;
+          g /= totalGreenWeight;
+          b /= totalBlueWeight;
+          
+          return vec4f(r, g, b, 1.0);
         }
       `;
 
-      const blurUniforms = {
-        // Use the new sampler API - pass texture and sampler separately
-        inputTex: { value: renderTarget.texture }, // Pass just the texture
-        inputSampler: { value: blurSampler }, // Pass custom sampler
-        maxBlurSize: { value: BLUR_MAX_SIZE },
-        samples: { value: BLUR_MAX_SAMPLES },
+      const chromaticUniforms = {
+        inputTex: { value: renderTarget.texture },
+        inputSampler: { value: blurSampler },
+        maxOffset: { value: CHROMATIC_MAX_OFFSET },
         angle: { value: 0 }, // Will be updated in render loop
+        samples: { value: 8 }, // Number of samples
+        useZoom: { value: 0.0 }, // 0 = radial blur, 1 = zoom blur
       };
 
-      blurPass = ctx.pass(blurShaderCode, {
-        uniforms: blurUniforms,
+      blurPass = ctx.pass(chromaticShaderCode, {
+        uniforms: chromaticUniforms,
       });
 
       // Create blur debug pass to visualize blur size calculation
@@ -910,8 +1213,8 @@ export default function Page() {
       `;
 
       const blurDebugUniforms = {
-        maxBlurSize: { value: BLUR_MAX_SIZE },
-        angle: { value: (blurAngleRef.current * Math.PI) / 180 }, // Convert degrees to radians
+        maxBlurSize: { value: CHROMATIC_MAX_OFFSET },
+        angle: { value: (chromaticAngleRef.current * Math.PI) / 180 }, // Convert degrees to radians
       };
 
       blurDebugPass = ctx.pass(blurDebugShaderCode, {
@@ -924,10 +1227,12 @@ export default function Page() {
           const canvas = entry.target as HTMLCanvasElement;
           const width = canvas.width;
           const height = canvas.height;
-          
+
           // Check if size changed (ignoring DPR as requested)
           if (width !== currentCanvasWidth || height !== currentCanvasHeight) {
             resizeSdfTarget(width, height);
+            // Resize the postprocessing render target to match canvas size
+            renderTarget.resize(width, height);
             // Texture references remain valid after resize - no need to update uniforms!
           }
         }
@@ -938,6 +1243,13 @@ export default function Page() {
       let lastTime = performance.now();
       let totalTime = 0;
 
+      // Mouse velocity tracking (calculated per frame)
+      let prevMouseX = 0;
+      let prevMouseY = 0;
+      let mouseVelocity = 0;
+      let mouseDirX = 0;
+      let mouseDirY = 0;
+
       function frame() {
         if (disposed || !ctx || !canvasRef.current) return;
 
@@ -946,18 +1258,52 @@ export default function Page() {
         lastTime = now;
         totalTime += deltaTime;
 
+        // Calculate mouse velocity and direction from position delta
+        const currentMouseX = mousePositionRef.current.x;
+        const currentMouseY = mousePositionRef.current.y;
+        const dx = currentMouseX - prevMouseX;
+        const dy = currentMouseY - prevMouseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (deltaTime > 0) {
+          const speed = dist / deltaTime;
+          // Smooth velocity with exponential decay
+          mouseVelocity = mouseVelocity * 0.8 + speed * 0.2;
+
+          // Update direction only if there's meaningful movement
+          if (dist > 0.001) {
+            const dirX = dx / dist;
+            const dirY = dy / dist;
+            mouseDirX = mouseDirX * 0.8 + dirX * 0.2;
+            mouseDirY = mouseDirY * 0.8 + dirY * 0.2;
+          } else {
+            // Decay direction when not moving
+            mouseDirX *= 0.95;
+            mouseDirY *= 0.95;
+          }
+        }
+
+        prevMouseX = currentMouseX;
+        prevMouseY = currentMouseY;
+
         // Render SDF texture only once per second OR when size changed
         // This saves GPU cycles since the SDF animates slowly
         const timeSinceLastSdfUpdate = totalTime - lastSdfUpdateTime;
-        const shouldUpdateSdf = needsSdfUpdate || timeSinceLastSdfUpdate >= SDF_UPDATE_INTERVAL;
-        
-        if (sdfTarget && shouldUpdateSdf) {
+        const shouldUpdateSdf =
+          needsSdfUpdate || timeSinceLastSdfUpdate >= SDF_UPDATE_INTERVAL;
+
+        if (sdfTarget && gradientTarget && shouldUpdateSdf) {
           sdfUniforms.time.value = totalTime;
           sdfUniforms.focused.value = focusedRef.current;
-          
+
+          // Step 1: Render SDF to sdfTarget
           ctx.setTarget(sdfTarget);
           sdfPass.draw();
-          
+
+          // Step 2: Render gradient pass from SDF texture to gradientTarget
+          ctx.setTarget(gradientTarget);
+          gradientPass.draw();
+
           lastSdfUpdateTime = totalTime;
           needsSdfUpdate = false;
         }
@@ -967,9 +1313,20 @@ export default function Page() {
         computeUniforms.time.value = totalTime;
         computeUniforms.focused.value = focusedRef.current;
 
-        // Update debug uniforms
-        debugUniforms.time.value = totalTime;
-        debugUniforms.focused.value = focusedRef.current;
+        // Update mouse uniforms
+        computeUniforms.mouseX.value = currentMouseX;
+        computeUniforms.mouseY.value = currentMouseY;
+        computeUniforms.mouseDirX.value = mouseDirX;
+        computeUniforms.mouseDirY.value = mouseDirY;
+        computeUniforms.mouseRadius.value = mouseRadiusRef.current;
+
+        // Scale force based on mouse velocity (0.5 to 50.0 range)
+        // Velocity of ~50 units/sec = full force, 0 = min force
+        const velocityFactor = Math.min(mouseVelocity / 50, 1);
+        const scaledForce =
+          mouseForceRef.current +
+          velocityFactor * (50.0 - mouseForceRef.current);
+        computeUniforms.mouseForce.value = scaledForce;
 
         // Dispatch compute shader (ping-pong)
         if (pingPong === 0) {
@@ -983,42 +1340,82 @@ export default function Page() {
         renderUniforms.bumpIntensity.value = bumpIntensityRef.current;
         renderUniforms.bumpProgress.value = bumpProgressRef.current;
 
-        // Update blur angle (convert degrees to radians)
-        const angleRadians = (blurAngleRef.current * Math.PI) / 180;
-        blurUniforms.angle.value = angleRadians;
+        // Update dark/light mode
+        const isDark = darkModeRef.current;
+        const clearColor: [number, number, number, number] = isDark
+          ? [0, 0, 0, 1]
+          : [1, 1, 1, 1];
+        renderUniforms.particleColor.value = isDark
+          ? [1.0, 1.0, 1.0]
+          : [0.0, 0.0, 0.0];
+
+        // Update chromatic aberration uniforms
+        const angleRadians = (chromaticAngleRef.current * Math.PI) / 180;
+        chromaticUniforms.angle.value = angleRadians;
+        chromaticUniforms.useZoom.value = useZoomBlurRef.current ? 1.0 : 0.0;
         blurDebugUniforms.angle.value = angleRadians;
         renderUniforms.blurAngle.value = angleRadians;
 
-        if (debugSdfRef.current) {
-          // SDF Debug mode: render the SDF visualization directly to canvas
-          ctx.setTarget(null);
-          debugPass.draw();
-        } else if (debugSdfTextureRef.current) {
-          // SDF Texture Debug mode: visualize the precomputed SDF texture with particles on top
-          ctx.setTarget(null);
-          ctx.clear()
-          ctx.autoClear = false;
-          
-          // Step 1: Draw SDF debug visualization
-          sdfTextureDebugPass.draw();
-          
-          // Step 2: Draw particles on top (without clearing!)
-          particleMaterial.draw();
+        // Determine if postprocessing is enabled based on render target selection
+        const isPostprocessingTarget = renderTargetRef.current === "final";
+        renderUniforms.postprocessingEnabled.value = isPostprocessingTarget
+          ? 1.0
+          : 0.0;
 
-          ctx.autoClear = true;
-        } else if (debugBlurRef.current) {
-          // Blur Debug mode: visualize blur size calculation
-          ctx.setTarget(null);
-          blurDebugPass.draw();
-        } else {
-          // Normal mode: render particles to target, then apply blur
-          // Step 1: Render particles to render target
-          ctx.setTarget(renderTarget);
-          particleMaterial.draw();
+        // Render based on selected render target
+        const currentTarget = renderTargetRef.current;
 
-          // Step 2: Apply blur postprocessing to canvas
-          ctx.setTarget(null);
-          blurPass.draw();
+        // Select particle material based on dark/light mode
+        const particleMaterial = isDark
+          ? particleMaterialDark
+          : particleMaterialLight;
+
+        switch (currentTarget) {
+          case "final":
+            // Final with postprocessing: render particles to target, then apply blur
+            ctx.setTarget(renderTarget);
+            ctx.autoClear = false;
+            ctx.clear(renderTarget, clearColor);
+            particleMaterial.draw();
+            ctx.setTarget(null);
+            blurPass.draw();
+            ctx.autoClear = true;
+            break;
+
+          case "final-no-post":
+            ctx.autoClear = false;
+            // Final without postprocessing: render particles directly to canvas
+            ctx.setTarget(null);
+            ctx.clear(null, clearColor);
+            particleMaterial.draw();
+            ctx.autoClear = true;
+            break;
+
+          case "sdf-texture":
+            // SDF Texture: visualize the precomputed SDF texture with particles overlay
+            ctx.setTarget(null);
+            ctx.clear();
+            ctx.autoClear = false;
+            sdfTextureDebugPass.draw();
+            particleMaterial.draw();
+            ctx.autoClear = true;
+            break;
+
+          case "gradient-texture":
+            // Gradient Texture: visualize the precomputed gradient texture with particles overlay
+            ctx.setTarget(null);
+            ctx.clear();
+            ctx.autoClear = false;
+            gradientTextureDebugPass.draw();
+            particleMaterial.draw();
+            ctx.autoClear = true;
+            break;
+
+          case "blur-size":
+            // Blur Size: visualize blur size calculation
+            ctx.setTarget(null);
+            blurDebugPass.draw();
+            break;
         }
 
         animationId = requestAnimationFrame(frame);
@@ -1034,13 +1431,17 @@ export default function Page() {
       if (resizeObserver) {
         resizeObserver.disconnect();
       }
+      // Remove mouse event listener
+      if (canvas) {
+        window.removeEventListener("mousemove", handleMouseMove);
+      }
       ctx?.dispose();
     };
   }, []);
 
   return (
-    <div 
-      className="w-screen h-screen bg-black" 
+    <div
+      className="w-screen h-screen bg-black"
       style={{ width: "100vw", height: "100vh", backgroundColor: "black" }}
     >
       <canvas

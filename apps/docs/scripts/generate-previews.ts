@@ -64,17 +64,11 @@ async function generatePreviews() {
       // Get code for this example
       let code = example.executable ? example.code : '';
       if (!example.executable && example.shader) {
-        // Generate runtime code for shader examples
+        // This shouldn't happen anymore - all examples should have code
+        console.warn(`Example ${example.slug} missing code, using shader fallback`);
         code = `
-const ctx = await gpu.init(canvas, { dpr: 1 });
+const ctx = await gpu.init(canvas, { dpr: 1, autoResize: true });
 const pass = ctx.pass(\`${example.shader.replace(/`/g, '\\`')}\`${example.uniforms ? `, { uniforms: ${JSON.stringify(example.uniforms)} }` : ''});
-
-const onResize = () => {
-  const rect = canvas.getBoundingClientRect();
-  ctx.resize(rect.width, rect.height);
-};
-window.addEventListener('resize', onResize);
-onResize();
 
 function frame() {
   pass.draw();

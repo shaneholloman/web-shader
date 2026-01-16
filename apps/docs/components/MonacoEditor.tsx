@@ -18,7 +18,7 @@ declare module 'ralph-gpu' {
     pass(shader: string, options?: { uniforms?: Record<string, any> }): Pass;
     material(shader: string, options?: any): Material;
     compute(shader: string, options?: any): ComputeShader;
-    target(width: number, height: number, options?: any): RenderTarget;
+    target(width?: number, height?: number, options?: any): RenderTarget;
     pingPong(width: number, height: number, options?: any): PingPongTarget;
     storage(byteSize: number): StorageBuffer;
     particles(count: number, options: any): Particles;
