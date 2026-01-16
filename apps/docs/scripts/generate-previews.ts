@@ -6,7 +6,8 @@ import * as http from 'http';
 import { PNG } from 'pngjs';
 
 async function generatePreviews() {
-  const examples = getAllExamples();
+  const _examples = getAllExamples();
+  const examples = [_examples[0]]
   const outputDir = path.join(__dirname, '../public/examples');
   
   // Ensure output directory exists
@@ -91,8 +92,9 @@ frame();
       });
       
       // Wait for rendering (longer for complex examples)
-      const isComplex = example.slug === 'fluid' || example.slug === 'alien-planet';
+      const isComplex = example.slug === 'fluid' || example.slug === 'alien-planet' || example.slug === examples[0].slug;
       await page.waitForTimeout(isComplex ? 5000 : (example.animated ? 3000 : 1500));
+      await page.waitForTimeout(5);
       
       // Screenshot the canvas
       const canvas = await page.$('canvas');
