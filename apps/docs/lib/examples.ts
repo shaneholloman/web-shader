@@ -502,7 +502,7 @@ frame();
   {
     slug: 'alien-planet',
     title: 'Alien Planet',
-    description: 'A procedurally generated alien world with atmospheric scattering, Saturn-like rings, orbiting moon, and twinkling starfield.',
+    description: 'A procedurally generated alien world with atmospheric scattering, orbiting moon, and particle-based starfield.',
     shader: `
 const MAX_STEPS: i32 = 100;
 const MAX_DIST: f32 = 200.0;
@@ -511,9 +511,7 @@ const PI: f32 = 3.14159265359;
 const PLANET_RADIUS: f32 = 8.0;
 const PLANET_POS: vec3f = vec3f(0.0, 0.0, 30.0);
 const ATMOSPHERE_RADIUS: f32 = 9.5;
-const RING_INNER: f32 = 11.0;
-const RING_OUTER: f32 = 16.0;
-const MOON_RADIUS: f32 = 1.2;
+const MOON_RADIUS: f32 = 1.5;
 
 fn hash21(p: vec2f) -> f32 {
   var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
@@ -556,17 +554,8 @@ fn sdPlanet(p: vec3f) -> f32 {
   return base - noise + crater;
 }
 
-fn sdRings(p: vec3f) -> f32 {
-  let lp = p - PLANET_POS;
-  let c = cos(0.3); let s = sin(0.3);
-  let tp = vec3f(lp.x, lp.y * c - lp.z * s, lp.y * s + lp.z * c);
-  let dist = length(tp.xz);
-  if (dist < RING_INNER || dist > RING_OUTER) { return MAX_DIST; }
-  return abs(tp.y) - 0.05;
-}
-
 fn getMoonPos(time: f32) -> vec3f {
-  return PLANET_POS + vec3f(cos(time * 0.15) * 14.0, sin(time * 0.1) * 4.0, sin(time * 0.15) * 12.0);
+  return PLANET_POS + vec3f(cos(time * 0.15) * 16.0, sin(time * 0.1) * 5.0, sin(time * 0.15) * 14.0);
 }
 
 fn sdMoon(p: vec3f, time: f32) -> f32 {
@@ -579,8 +568,7 @@ struct Hit { dist: f32, mat: i32 }
 fn map(p: vec3f, time: f32) -> Hit {
   var h: Hit; h.dist = MAX_DIST; h.mat = 0;
   let pd = sdPlanet(p); if (pd < h.dist) { h.dist = pd; h.mat = 1; }
-  let rd = sdRings(p); if (rd < h.dist) { h.dist = rd; h.mat = 2; }
-  let md = sdMoon(p, time); if (md < h.dist) { h.dist = md; h.mat = 3; }
+  let md = sdMoon(p, time); if (md < h.dist) { h.dist = md; h.mat = 2; }
   return h;
 }
 
@@ -593,19 +581,29 @@ fn calcNormal(p: vec3f, time: f32) -> vec3f {
 
 fn stars(rd: vec3f, time: f32) -> vec3f {
   var col = vec3f(0.0);
-  let g1 = floor(rd * 100.0); let h1 = hash31(g1);
-  if (h1 > 0.97) {
-    let sc = (g1 + 0.5) / 100.0;
-    let d = length(rd - normalize(sc)) * 100.0;
-    col += smoothstep(1.5, 0.0, d) * (sin(time * 3.0 + h1 * 100.0) * 0.3 + 0.7) * 0.5;
+  
+  // Dense field of small stars  
+  let grid = floor(rd * 200.0);
+  let h = hash31(grid);
+  if (h > 0.985) {
+    let starCenter = normalize((grid + 0.5) / 200.0);
+    let dist = length(rd - starCenter) * 200.0;
+    let brightness = smoothstep(0.8, 0.0, dist);
+    let twinkle = 0.7 + 0.3 * sin(time * 5.0 + h * 100.0);
+    col += brightness * twinkle * 0.6;
   }
-  let g2 = floor(rd * 50.0); let h2 = hash31(g2 + 100.0);
-  if (h2 > 0.99) {
-    let sc = (g2 + 0.5) / 50.0;
-    let d = length(rd - normalize(sc)) * 50.0;
-    let cv = hash33(g2);
-    col += mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), cv.x) * smoothstep(2.0, 0.0, d);
+  
+  // Larger bright stars with color variation
+  let grid2 = floor(rd * 40.0);
+  let h2 = hash31(grid2 + 100.0);
+  if (h2 > 0.96) {
+    let starCenter = normalize((grid2 + 0.5) / 40.0);
+    let dist = length(rd - starCenter) * 40.0;
+    let brightness = smoothstep(1.5, 0.0, dist);
+    let starColor = mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), hash31(grid2 + 200.0));
+    col += brightness * starColor;
   }
+  
   return col;
 }
 
@@ -636,28 +634,20 @@ fn getPlanetColor(p: vec3f, time: f32) -> vec3f {
   return col;
 }
 
-fn getRingColor(p: vec3f) -> vec3f {
-  let lp = p - PLANET_POS; let d = length(lp.xz);
-  let pat = sin(d * 8.0) * 0.5 + 0.5;
-  let n = hash21(vec2f(d * 10.0, atan2(lp.x, lp.z) * 5.0));
-  var col = mix(vec3f(0.8, 0.7, 0.6), vec3f(0.4, 0.35, 0.3), pat) * (0.5 + n * 0.5);
-  if (sin(d * 30.0) > 0.7) { col *= 0.3; }
-  return col;
-}
-
 @fragment
 fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   var uv = (fc.xy - 0.5 * globals.resolution) / globals.resolution.y;
   uv.y = -uv.y;
   let time = globals.time;
-  let camDist = 50.0 - time * 0.5; let camAngle = time * 0.05;
-  let ro = vec3f(sin(camAngle) * 15.0, sin(time * 0.1) * 3.0 + 5.0, camDist);
+  let camDist = 75.0 - time * 0.3; let camAngle = time * 0.05;
+  let ro = vec3f(sin(camAngle) * 20.0, sin(time * 0.1) * 4.0 + 8.0, camDist);
   let forward = normalize(PLANET_POS - ro);
   let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
   let up = cross(forward, right);
   let rd = normalize(forward + uv.x * right + uv.y * up);
   let sunDir = normalize(vec3f(0.5, 0.3, -1.0));
   
+  // Background with stars, nebula and sun glow
   var col = stars(rd, time);
   col += pow(max(dot(rd, sunDir), 0.0), 256.0) * 2.0 * vec3f(1.0, 0.9, 0.7);
   col += pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.3 * vec3f(1.0, 0.9, 0.7);
@@ -679,8 +669,7 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     let p = ro + rd * t; let n = calcNormal(p, time);
     var mc = vec3f(0.5);
     if (hit.mat == 1) { mc = getPlanetColor(p, time); }
-    else if (hit.mat == 2) { mc = getRingColor(p); }
-    else if (hit.mat == 3) { mc = vec3f(0.5, 0.5, 0.55) * fbm(n * 8.0); }
+    else if (hit.mat == 2) { mc = vec3f(0.5, 0.5, 0.55) * fbm(n * 8.0); }
     
     let diff = max(dot(n, sunDir), 0.0);
     let vd = normalize(ro - p);
@@ -690,10 +679,12 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     
     var sc = vec3f(0.02, 0.03, 0.05) * mc + mc * vec3f(1.0, 0.95, 0.9) * diff + vec3f(1.0, 0.9, 0.8) * spec * 0.3;
     if (hit.mat == 1) { sc += vec3f(0.3, 0.5, 1.0) * fres * 0.5; }
-    if (hit.mat == 2) { col = mix(col, sc, 0.7); } else { col = sc; }
+    col = sc;
+  } else {
+    // Only add atmosphere if we didn't hit the planet/moon
+    col += atmosphere(ro, rd);
   }
   
-  col += atmosphere(ro, rd);
   col = col / (col + vec3f(1.0));
   col = pow(col, vec3f(0.95, 1.0, 1.05));
   col = pow(col, vec3f(1.0 / 2.2));
@@ -706,7 +697,7 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 const canvas = document.getElementById('canvas');
 const ctx = await gpu.init(canvas);
 
-// Full alien planet with rings, moon, atmosphere
+// Alien planet with moon and atmosphere
 const alienPlanet = ctx.pass(\`
 const MAX_STEPS: i32 = 100;
 const MAX_DIST: f32 = 200.0;
@@ -760,17 +751,8 @@ fn sdPlanet(p: vec3f) -> f32 {
   return base - noise + crater;
 }
 
-fn sdRings(p: vec3f) -> f32 {
-  let lp = p - PLANET_POS;
-  let c = cos(0.3); let s = sin(0.3);
-  let tp = vec3f(lp.x, lp.y * c - lp.z * s, lp.y * s + lp.z * c);
-  let dist = length(tp.xz);
-  if (dist < RING_INNER || dist > RING_OUTER) { return MAX_DIST; }
-  return abs(tp.y) - 0.05;
-}
-
 fn getMoonPos(time: f32) -> vec3f {
-  return PLANET_POS + vec3f(cos(time * 0.15) * 14.0, sin(time * 0.1) * 4.0, sin(time * 0.15) * 12.0);
+  return PLANET_POS + vec3f(cos(time * 0.15) * 16.0, sin(time * 0.1) * 5.0, sin(time * 0.15) * 14.0);
 }
 
 fn sdMoon(p: vec3f, time: f32) -> f32 {
@@ -783,8 +765,7 @@ struct Hit { dist: f32, mat: i32 }
 fn map(p: vec3f, time: f32) -> Hit {
   var h: Hit; h.dist = MAX_DIST; h.mat = 0;
   let pd = sdPlanet(p); if (pd < h.dist) { h.dist = pd; h.mat = 1; }
-  let rd = sdRings(p); if (rd < h.dist) { h.dist = rd; h.mat = 2; }
-  let md = sdMoon(p, time); if (md < h.dist) { h.dist = md; h.mat = 3; }
+  let md = sdMoon(p, time); if (md < h.dist) { h.dist = md; h.mat = 2; }
   return h;
 }
 
@@ -797,19 +778,29 @@ fn calcNormal(p: vec3f, time: f32) -> vec3f {
 
 fn stars(rd: vec3f, time: f32) -> vec3f {
   var col = vec3f(0.0);
-  let g1 = floor(rd * 100.0); let h1 = hash31(g1);
-  if (h1 > 0.97) {
-    let sc = (g1 + 0.5) / 100.0;
-    let d = length(rd - normalize(sc)) * 100.0;
-    col += smoothstep(1.5, 0.0, d) * (sin(time * 3.0 + h1 * 100.0) * 0.3 + 0.7) * 0.5;
+  
+  // Dense field of small stars  
+  let grid = floor(rd * 200.0);
+  let h = hash31(grid);
+  if (h > 0.985) {
+    let starCenter = normalize((grid + 0.5) / 200.0);
+    let dist = length(rd - starCenter) * 200.0;
+    let brightness = smoothstep(0.8, 0.0, dist);
+    let twinkle = 0.7 + 0.3 * sin(time * 5.0 + h * 100.0);
+    col += brightness * twinkle * 0.6;
   }
-  let g2 = floor(rd * 50.0); let h2 = hash31(g2 + 100.0);
-  if (h2 > 0.99) {
-    let sc = (g2 + 0.5) / 50.0;
-    let d = length(rd - normalize(sc)) * 50.0;
-    let cv = hash33(g2);
-    col += mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), cv.x) * smoothstep(2.0, 0.0, d);
+  
+  // Larger bright stars with color variation
+  let grid2 = floor(rd * 40.0);
+  let h2 = hash31(grid2 + 100.0);
+  if (h2 > 0.96) {
+    let starCenter = normalize((grid2 + 0.5) / 40.0);
+    let dist = length(rd - starCenter) * 40.0;
+    let brightness = smoothstep(1.5, 0.0, dist);
+    let starColor = mix(vec3f(1.0, 0.9, 0.8), vec3f(0.8, 0.9, 1.0), hash31(grid2 + 200.0));
+    col += brightness * starColor;
   }
+  
   return col;
 }
 
@@ -840,28 +831,20 @@ fn getPlanetColor(p: vec3f, time: f32) -> vec3f {
   return col;
 }
 
-fn getRingColor(p: vec3f) -> vec3f {
-  let lp = p - PLANET_POS; let d = length(lp.xz);
-  let pat = sin(d * 8.0) * 0.5 + 0.5;
-  let n = hash21(vec2f(d * 10.0, atan2(lp.x, lp.z) * 5.0));
-  var col = mix(vec3f(0.8, 0.7, 0.6), vec3f(0.4, 0.35, 0.3), pat) * (0.5 + n * 0.5);
-  if (sin(d * 30.0) > 0.7) { col *= 0.3; }
-  return col;
-}
-
 @fragment
 fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   var uv = (fc.xy - 0.5 * globals.resolution) / globals.resolution.y;
   uv.y = -uv.y;
   let time = globals.time;
-  let camDist = 50.0 - time * 0.5; let camAngle = time * 0.05;
-  let ro = vec3f(sin(camAngle) * 15.0, sin(time * 0.1) * 3.0 + 5.0, camDist);
+  let camDist = 75.0 - time * 0.3; let camAngle = time * 0.05;
+  let ro = vec3f(sin(camAngle) * 20.0, sin(time * 0.1) * 4.0 + 8.0, camDist);
   let forward = normalize(PLANET_POS - ro);
   let right = normalize(cross(vec3f(0.0, 1.0, 0.0), forward));
   let up = cross(forward, right);
   let rd = normalize(forward + uv.x * right + uv.y * up);
   let sunDir = normalize(vec3f(0.5, 0.3, -1.0));
   
+  // Background with stars, nebula and sun glow
   var col = stars(rd, time);
   col += pow(max(dot(rd, sunDir), 0.0), 256.0) * 2.0 * vec3f(1.0, 0.9, 0.7);
   col += pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.3 * vec3f(1.0, 0.9, 0.7);
@@ -883,8 +866,7 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     let p = ro + rd * t; let n = calcNormal(p, time);
     var mc = vec3f(0.5);
     if (hit.mat == 1) { mc = getPlanetColor(p, time); }
-    else if (hit.mat == 2) { mc = getRingColor(p); }
-    else if (hit.mat == 3) { mc = vec3f(0.5, 0.5, 0.55) * fbm(n * 8.0); }
+    else if (hit.mat == 2) { mc = vec3f(0.5, 0.5, 0.55) * fbm(n * 8.0); }
     
     let diff = max(dot(n, sunDir), 0.0);
     let vd = normalize(ro - p);
@@ -894,10 +876,12 @@ fn main(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     
     var sc = vec3f(0.02, 0.03, 0.05) * mc + mc * vec3f(1.0, 0.95, 0.9) * diff + vec3f(1.0, 0.9, 0.8) * spec * 0.3;
     if (hit.mat == 1) { sc += vec3f(0.3, 0.5, 1.0) * fres * 0.5; }
-    if (hit.mat == 2) { col = mix(col, sc, 0.7); } else { col = sc; }
+    col = sc;
+  } else {
+    // Only add atmosphere if we didn't hit the planet/moon
+    col += atmosphere(ro, rd);
   }
   
-  col += atmosphere(ro, rd);
   col = col / (col + vec3f(1.0));
   col = pow(col, vec3f(0.95, 1.0, 1.05));
   col = pow(col, vec3f(1.0 / 2.2));

@@ -84,12 +84,8 @@ export function ShaderPlayground({ initialExample }: ShaderPlaygroundProps) {
 
   // Run initial code on mount
   useEffect(() => {
-    if (initialExample.executable) {
-      setActiveCode(initialExample.code);
-    } else if (initialExample.shader) {
-      setActiveCode(generateRuntimeCode(initialExample.shader, initialExample.uniforms, initialExample.animated));
-    }
-  }, [initialExample.executable, initialExample.shader, initialExample.code, initialExample.uniforms, initialExample.animated]);
+    setActiveCode(initialExample.code);
+  }, [initialExample.code]);
 
   useEffect(() => {
     if (typeof navigator !== 'undefined') {
@@ -102,23 +98,8 @@ export function ShaderPlayground({ initialExample }: ShaderPlaygroundProps) {
   const handleRun = useCallback(() => {
     setError(null);
     setRunKey(k => k + 1); // Reset iframe on each run
-    
-    // For executable examples, run the full code
-    if (initialExample.executable) {
-      setActiveCode(code);
-      return;
-    }
-    
-    // Legacy: Extract the shader from the full API code for rendering
-    const match = code.match(/ctx\.pass\(`([\s\S]*?)`[,)]/);
-    if (match && match[1]) {
-      const extractedShader = match[1];
-      const extractedUniforms = extractUniformsFromCode(code);
-      setActiveCode(generateRuntimeCode(extractedShader, extractedUniforms || initialExample.uniforms, initialExample.animated));
-    } else {
-      setError('Could not extract shader code. Make sure the code contains ctx.pass(`...`)');
-    }
-  }, [code, initialExample.uniforms, initialExample.animated, initialExample.executable]);
+    setActiveCode(code); // Just run the code directly
+  }, [code]);
 
   const handleError = useCallback((err: string | null) => {
     setError(err);
