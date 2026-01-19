@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CodeBlock } from '@/components/CodeBlock';
-import bundleSize from '../public/bundle-size.json';
+import bundleSize from '../../public/bundle-size.json';
 
 const heroCode = `import { gpu } from "ralph-gpu";
 

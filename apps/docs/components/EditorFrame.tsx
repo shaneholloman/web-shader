@@ -90,7 +90,7 @@ export function EditorFrame({ initialCode, code, onChange, onRun }: EditorFrameP
   return (
     <iframe
       ref={iframeRef}
-      src="/editor.html"
+      src="/editor"
       className="w-full h-full border-0"
       title="Monaco Editor"
     />
